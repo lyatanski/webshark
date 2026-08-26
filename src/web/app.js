@@ -535,9 +535,8 @@ $('#cols').addEventListener('click', e => {
 // each end, and "either of them is not this one" is true of very nearly
 // everything.
 async function hide(addr) {
-  $('#spin').hidden = false
+  note('Removing ' + addr + '…')
   const term = await addrTerm(addr).catch(() => '')
-  $('#spin').hidden = true
   if (!term) { note('no field of the capture holds ' + addr + ', so there is no filter for it'); return }
   filter(S.filter ? '(' + S.filter + ') and !(' + term + ')' : '!(' + term + ')')
 }
@@ -798,7 +797,7 @@ $('#tree').addEventListener('dblclick', e => {
   const el = e.target.closest('.n')
   if (el) toggle(el)
 })
-$('#field').addEventListener('click', () => {
+$('footer').addEventListener('click', () => {
   if ($('#field')._filter) filter($('#field')._filter)
 })
 
@@ -862,20 +861,16 @@ async function filter(text) {
   text = (text || '').trim()
   $('#filter').value = text
   closeComplete()
-  $('#spin').hidden = false
-  try {
-    if (text) {
-      const check = await api('check', { f: S.file, filter: text }).catch(err => ({ ok: false, err: err.message }))
-      if (!check.ok) { $('#filter').classList.add('bad'); note(check.err); return }
-    }
-    $('#filter').classList.remove('bad')
-    note('')
-    S.filter = text
-    rewind()
-    await fetchPage(0)   // the slow part: sharkd builds the whole-file match bitmap here
-  } finally {
-    $('#spin').hidden = true
+  note('Filtering…')
+  if (text) {
+    const check = await api('check', { f: S.file, filter: text }).catch(err => ({ ok: false, err: err.message }))
+    if (!check.ok) { $('#filter').classList.add('bad'); note(check.err); return }
   }
+  $('#filter').classList.remove('bad')
+  S.filter = text
+  rewind()
+  await fetchPage(0)   // the slow part: sharkd builds the whole-file match bitmap here
+  if (S.pages.has(0)) note('')   // otherwise fetchPage() already left its own error in #msg
 }
 
 function rewind() {
@@ -1016,6 +1011,10 @@ async function files() {
   $('#filter').value = S.find
   $('#filter').classList.remove('bad')
   closeComplete()
+  const field = $('#field')
+  field.textContent = ''
+  field._filter = ''
+  field.title = ''
   sync()
 
   S.caps = await api('captures').catch(err => { note(err.message); return [] })
@@ -1044,7 +1043,7 @@ function drawFiles() {
   }
   filesPaint()
   $('#empty').hidden = S.filed.length > 0
-  $('#empty').textContent = !S.caps.length ? 'No captures in the directory yet.'
+  $('#empty').textContent = !S.caps.length ? 'No captures yet.'
     : 'No capture matches that.'
   counter()
   // rows still waiting for their protocols are shown rather than hidden, so say
@@ -1345,7 +1344,7 @@ async function locate(num) {
 }
 
 async function openCapture(file, want, num, as) {
-  note('opening ' + file + ' …')
+  note('Opening ' + file + ' …')
   let st
   try {
     st = await api('status', { f: file })
@@ -1398,7 +1397,6 @@ async function upload(chosen) {
   files()
 }
 
-$('#pick').onchange = e => upload(e.target.files)
 document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('drop') })
 document.addEventListener('dragleave', () => document.body.classList.remove('drop'))
 document.addEventListener('drop', e => {

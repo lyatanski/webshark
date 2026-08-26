@@ -94,12 +94,12 @@ header {
 #complete li.sel > span:last-child, #complete li:hover > span:last-child { color: inherit; }
 /* pushes count+mode+theme to the right edge */
 #count { color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; margin-left: auto; }
-button, .upload {
+button {
   padding: 3px 8px; font: inherit; color: var(--fg); cursor: pointer;
   background: var(--bg); border: 1px solid var(--line); border-radius: 3px;
   text-decoration: none;
 }
-button:hover, .upload:hover { border-color: var(--sel); }
+button:hover { border-color: var(--sel); }
 
 /* The view switch draws the view it is showing and morphs into the other one on
    hover, so the hover is a preview of the click. Each list row is one item -
@@ -179,9 +179,6 @@ button:hover, .upload:hover { border-color: var(--sel); }
 /* a row the filter cannot judge yet: its protocols are still being read, so it
    is on the list on the chance that they match */
 .caprow.tent { opacity: .55; }
-#drophint, #empty, .upload { margin-left: 16px; }
-#drophint, #empty { color: var(--dim); }
-.upload { display: inline-block; }
 body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 
 /* ------------------------------------------------------------- packet list */
@@ -209,14 +206,6 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
   border-bottom: 1px solid var(--line); contain: layout paint; background: var(--list);
 }
 #canvas { position: relative; }
-/* centred over the pane it is loading, above the sticky header and the rows */
-#spin {
-  position: absolute; top: 50%; left: 50%; z-index: 3;
-  width: 24px; height: 24px; margin: -12px 0 0 -12px;
-  border: 3px solid var(--line); border-top-color: var(--sel); border-radius: 50%;
-  animation: spin .6s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
 .row { position: absolute; left: 0; right: 0; font: 12px var(--mono); cursor: default; }
 .row:hover { background: var(--head); }
 .row.sel, .row.sel:hover { background: var(--sel); color: var(--selfg); }
@@ -399,4 +388,14 @@ footer {
   color: var(--dim); font: 12px var(--mono);
   white-space: nowrap; overflow: hidden;
 }
-#field { cursor: pointer; }
+/* the click is on the whole bar (easier to hit), but only worth having a
+   pointer for while there is a field's filter to apply */
+footer:has(#field:not(:empty)) { cursor: pointer; }
+/* an empty #msg/#field would still claim its 12px of gap, nudging whatever
+   comes after it (#empty, #drophint) to the right for no reason */
+footer > span:empty { display: none; }
+/* only a hint for the capture list, and only while #msg has nothing more
+   pressing to say - the viewer has nowhere to drop a file onto, and a status
+   message (opening, uploading, still reading...) already says enough */
+#viewer:not([hidden]) ~ footer #drophint,
+#msg:not(:empty) ~ #drophint { display: none; }

@@ -60,22 +60,19 @@ the beginning of that capture was read, so a protocol later in it may be missing
     </div>
     <div id=filecanvas></div>
   </div>
-  <p id=empty hidden>No captures in the directory yet.</p>
-  <label class=upload>Upload<input id=pick type=file multiple hidden></label>
-  <span id=drophint>or drop capture files anywhere on the page</span>
 </section>
 
 <section id=viewer hidden>
   <div id=flowwarn hidden><span id=flowmsg></span>
     <a id=flowfilter>filter</a> to narrow it down; the rest draw as plain rows.</div>
-  <div id=list><div id=cols></div><div id=canvas></div><div id=spin hidden></div></div>
+  <div id=list><div id=cols></div><div id=canvas></div></div>
   <div id=panes>
     <div id=tree></div>
     <div id=bytes><div id=sources></div><pre id=hex></pre></div>
   </div>
 </section>
 
-<footer><span id=msg></span><span id=field></span></footer>
+<footer><span id=msg></span><span id=field></span><span id=empty hidden></span><span id=drophint>Drop capture files anywhere on the page</span></footer>
 
 <script src=app.js></script>
 </body>
