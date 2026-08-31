@@ -34,8 +34,8 @@ RUN cmake -S /src -B /build \
         -D CMAKE_BUILD_TYPE=Release \
         -D BUILD_sharkd=ON -D BUILD_tshark=OFF -D BUILD_dftest=OFF \
         -D BUILD_wireshark=OFF -D BUILD_rawshark=OFF -D BUILD_dumpcap=OFF \
-        -D BUILD_capinfos=OFF -D BUILD_captype=OFF -D BUILD_editcap=OFF \
-        -D BUILD_mergecap=OFF -D BUILD_reordercap=OFF -D BUILD_text2pcap=OFF \
+        -D BUILD_capinfos=OFF -D BUILD_captype=OFF -D BUILD_editcap=ON \
+        -D BUILD_mergecap=ON -D BUILD_reordercap=ON -D BUILD_text2pcap=OFF \
         -D BUILD_randpkt=OFF -D BUILD_dcerpcidl2wrs=OFF -D BUILD_mmdbresolve=OFF \
         -D BUILD_androiddump=OFF -D BUILD_sshdump=OFF -D BUILD_ciscodump=OFF \
         -D BUILD_dpauxmon=OFF -D BUILD_randpktdump=OFF -D BUILD_wifidump=OFF \

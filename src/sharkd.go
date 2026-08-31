@@ -38,16 +38,16 @@ type session struct {
 }
 
 type pool struct {
-	bin, tshark, dir string
-	max              int
-	idle             time.Duration
+	bin, dir string
+	max      int
+	idle     time.Duration
 
 	mu   sync.Mutex
 	live map[string]*session
 }
 
-func newPool(bin, tshark, dir string, max int, idle time.Duration) *pool {
-	p := &pool{bin: bin, tshark: tshark, dir: dir, max: max, idle: idle, live: map[string]*session{}}
+func newPool(bin, dir string, max int, idle time.Duration) *pool {
+	p := &pool{bin: bin, dir: dir, max: max, idle: idle, live: map[string]*session{}}
 	go p.reap()
 	return p
 }
@@ -136,36 +136,26 @@ func (p *pool) start() (*session, error) {
 }
 
 func (p *pool) spawn(file string) (*session, error) {
-	path := filepath.Join(p.dir, file)
-
-	// The capture's ESP SAs come out of a second read of the same file, so it
-	// runs while sharkd is loading rather than after it - both are one pass over
-	// the capture and neither needs the other's result.
-	sas := make(chan []string, 1)
-	go func() {
-		records, err := espSAs(p.tshark, path)
-		if err != nil {
-			log.Printf("esp: %s: %v", file, err)
-		}
-		sas <- records
-	}()
-
 	s, err := p.start()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.do("load", map[string]any{"file": path}); err != nil {
+	if _, err := s.do("load", map[string]any{"file": filepath.Join(p.dir, file)}); err != nil {
 		s.close()
 		return nil, err
 	}
 
-	// Then the SAs, into the same preference table Wireshark's ESP SAs dialog
-	// writes - `setconf` takes the `uat:` syntax that tshark's -o does, one
-	// record per call. After the load rather than before it because that is when
-	// the other pass has finished, which is soon enough: sharkd dissects a frame
-	// when it is asked for one, and this session is answering nothing until
-	// spawn returns it.
-	records := <-sas
+	// The capture's own ESP SAs, read back out of the session that has just
+	// loaded it (esp.go) and put into the same preference table Wireshark's ESP
+	// SAs dialog writes - `setconf` takes the `uat:` syntax that tshark's -o
+	// does, one record per call. Both halves are this one session, so they are
+	// one after the other rather than at once, and that is soon enough: sharkd
+	// dissects a frame when it is asked for one, and this session is answering
+	// nothing until spawn returns it.
+	records, err := espSAs(s)
+	if err != nil {
+		log.Printf("esp: %s: %v", file, err)
+	}
 	for _, record := range records {
 		if _, err := s.do("setconf", map[string]any{"name": "uat:esp_sa", "value": record}); err != nil {
 			log.Printf("esp: %s: %v", file, err)

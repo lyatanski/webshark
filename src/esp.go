@@ -36,40 +36,47 @@ package main
 //
 //	webshark -esp /captures/trace.pcapng > ~/.config/wireshark/esp_sa
 //
-// Reading the file is tshark's job and not sharkd's, which is the one thing here
-// that is not about IMS: sharkd answers with columns and dissection trees, and
-// this wants neither - seven fields of the few frames that carry them, which is
-// what `-T fields` is.
+// This reads them out of the sharkd that already holds the capture. `frames`
+// takes a display filter and a column list, and a column can be any field, so
+// the seven values below come back as seven columns of the few frames that carry
+// them: one request, no second reading of the file and no second program.
 
 import (
-	"bufio"
+	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
+	"net/netip"
 	"strconv"
 	"strings"
 )
 
 // Only the frames that hold one of the three headers, and of those only the
-// fields below.
-//
-// The addresses are taken as the columns rather than as ip.src and ip.dst,
-// because a column holds the address of the innermost header - which is the pair
-// ESP is matched on, and in this stack is inside a GTP-U tunnel whose own
-// addresses are of no interest. It is also the only spelling that does not have
-// to know in advance whether the registration is over IPv4 or IPv6, or which of
-// the two is carrying the other.
-//
-// -E occurrence=l takes the last occurrence of every field, which matters where
-// one TCP segment carries several SIP messages: the parameters of the last of
-// them are then read together, instead of every message's being joined into one
-// unusable value. -n keeps name resolution from turning an address into a host.
+// columns below.
 const espFilter = "sip.auth.ik || sip.Security-Server || sip.Security-Client"
 
-var espFields = []string{
-	"_ws.col.def_src", "_ws.col.def_dst",
-	"sip.Call-ID", "sip.auth.ck", "sip.auth.ik",
-	"sip.Security-Server", "sip.Security-Client",
+// sharkd's `frames` takes a column list rather than a field list: `<display
+// filter>:<occurrence>` is a custom column over that field, and a bare number is
+// one of Wireshark's own column formats, given as its position in the COL_ enum
+// of epan/column-utils.h.
+//
+// An occurrence of -1 is the last occurrence of the field in the frame, which is
+// what `tshark -E occurrence=l` was for: where one TCP segment carries several
+// SIP messages, the parameters of the last of them are then read together,
+// instead of every message's being joined into one unusable value.
+//
+// The addresses are columns rather than ip.src and ip.dst because a column holds
+// the address of the innermost header - which is the pair ESP is matched on, and
+// in this stack is inside a GTP-U tunnel whose own addresses are of no interest.
+// It is also the only spelling that does not have to know in advance whether the
+// registration is over IPv4 or IPv6, or which of the two is carrying the other.
+// Unresolved rather than the default pair, which is what `tshark -n` was for: a
+// profile with nameres.network_name on would otherwise put a host name there.
+var espColumns = []string{
+	"41", "8", // COL_UNRES_SRC, COL_UNRES_DST
+	"sip.Call-ID:-1",
+	"sip.auth.ck:-1",
+	"sip.auth.ik:-1",
+	"sip.Security-Server:-1",
+	"sip.Security-Client:-1",
 }
 
 // ...in that order, which is how a row is read.
@@ -102,22 +109,27 @@ var (
 
 const espAnyICV = "ANY 96 bit authentication [no checking]"
 
-// espSAs runs tshark over one capture and returns its SAs as esp_sa records,
-// deduplicated, in the order the registrations that produced them appear in the
-// file. No SAs is not an error: most captures have no IPsec in them at all.
-func espSAs(tshark, file string) ([]string, error) {
-	args := []string{"-r", file, "-n", "-Y", espFilter, "-T", "fields", "-E", "occurrence=l"}
-	for _, field := range espFields {
-		args = append(args, "-e", field)
+// espSAs asks one loaded capture's sharkd for its SAs and returns them as esp_sa
+// records, deduplicated, in the order the registrations that produced them
+// appear in the file. No SAs is not an error: most captures have no IPsec in
+// them at all.
+func espSAs(s *session) ([]string, error) {
+	params := map[string]any{"filter": espFilter}
+	for i, column := range espColumns {
+		params["column"+strconv.Itoa(i)] = column
 	}
-	cmd := exec.Command(tshark, args...)
-	cmd.Stderr = os.Stderr // as sharkd's, this belongs in the container log
-	out, err := cmd.StdoutPipe()
+	// No `limit`, which sharkd reads as no limit at all, so this is every frame
+	// the filter passes - and the filter has already cut the file down to the
+	// few frames of its registrations.
+	raw, err := s.do("frames", params)
 	if err != nil {
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	var frames []struct {
+		Columns []string `json:"c"`
+	}
+	if err := json.Unmarshal(raw, &frames); err != nil {
+		return nil, fmt.Errorf("esp: %w", err)
 	}
 
 	// Both maps are the state of a registration in progress, keyed by Call-ID:
@@ -130,9 +142,8 @@ func espSAs(tshark, file string) ([]string, error) {
 
 	var sas []string
 	seen := map[string]bool{}
-	rows := bufio.NewScanner(out)
-	for rows.Scan() {
-		row := espRow(rows.Text())
+	for _, frame := range frames {
+		row := espRow(frame.Columns)
 		call := row[espCall]
 		if call == "" {
 			continue
@@ -156,9 +167,21 @@ func espSAs(tshark, file string) ([]string, error) {
 		if header == "" {
 			continue
 		}
+		// The addresses are parsed rather than trusted, which is also where the
+		// address family comes from: the two column numbers above are positions
+		// in an enum upstream keeps in alphabetical order, so an entry added to
+		// it moves them, and a column that stops holding an address is then a
+		// row dropped rather than an SA built out of a protocol name.
 		pcscf, ue := row[espSrc], row[espDst]
+		src, err := netip.ParseAddr(pcscf)
+		if err != nil {
+			continue
+		}
+		if _, err := netip.ParseAddr(ue); err != nil {
+			continue
+		}
 		proto := "IPv4"
-		if strings.Contains(pcscf, ":") {
+		if src.Is6() {
 			proto = "IPv6"
 		}
 		mech := espMech(header)
@@ -168,11 +191,10 @@ func espSAs(tshark, file string) ([]string, error) {
 		if !authOK {
 			auth = espAnyICV
 		}
-		// Everything the four records are made of, or none of them: the addresses,
-		// a challenge to take the keys from, an encryption algorithm that can be
-		// named at all, and ESP rather than the AH nobody deploys.
-		if pcscf == "" || ue == "" || ik == "" || !encOK || mech["prot"] == "ah" ||
-			(enc != "NULL" && ck == "") {
+		// Everything the four records are still made of, the addresses now being
+		// behind us: a challenge to take the keys from, an encryption algorithm
+		// that can be named at all, and ESP rather than the AH nobody deploys.
+		if ik == "" || !encOK || mech["prot"] == "ah" || (enc != "NULL" && ck == "") {
 			continue
 		}
 
@@ -189,45 +211,78 @@ func espSAs(tshark, file string) ([]string, error) {
 		add(ue, pcscf, espSPIs(mech))
 		add(pcscf, ue, client[call])
 	}
-	if err := rows.Err(); err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-		return nil, err
-	}
-	if err := cmd.Wait(); err != nil {
-		return nil, fmt.Errorf("%s %s: %w", tshark, file, err)
-	}
 	return sas, nil
 }
 
-// A row is one line of `-T fields` output: the fields above, tab separated, the
-// absent ones empty. Short rows are padded rather than rejected, so a tshark
-// that stops printing trailing empty fields cannot index out of range here.
-func espRow(line string) []string {
-	row := strings.Split(line, "\t")
-	for len(row) < len(espFields) {
-		row = append(row, "")
+// espFile is `webshark -esp <capture>`: the SAs of one capture named by path,
+// out of a sharkd started to hold it and nothing else. A bare pool because
+// start() wants no more than the binary to run - there is nothing here to pool.
+func espFile(bin, path string) ([]string, error) {
+	s, err := (&pool{bin: bin}).start()
+	if err != nil {
+		return nil, err
 	}
+	defer s.close()
+	if _, err := s.do("load", map[string]any{"file": path}); err != nil {
+		return nil, err
+	}
+	return espSAs(s)
+}
+
+// A row is one frame's columns, in the order of espColumns above, the absent
+// ones empty. It is padded rather than rejected, so a sharkd that answers with
+// fewer columns than it was asked for cannot index out of range here.
+func espRow(columns []string) []string {
+	row := make([]string, len(espColumns))
+	copy(row, columns)
 	return row
 }
 
-// One security-agreement header value - `ipsec-3gpp;q=0.1;prot=esp;spi-c=256;…`
-// - as its parameters. First occurrence wins, so a header offering several
-// mechanisms is read as the first of them, and values are lowercased because the
-// algorithm names above are compared against.
+// One security-agreement header value as the parameters of the one mechanism in
+// it the SAs are made of.
+//
+// RFC 3329 makes the value a list of mechanisms and not a single one -
+// `ipsec-3gpp;q=0.1;prot=esp;spi-c=256;…, digest;d-alg=md5` - separated by
+// commas, each of them `name` followed by its own `;param=value`. A UE that
+// supports several algorithm pairs offers one mechanism per pair, so four of
+// them in one header is ordinary, and every one of the four repeats the same
+// SPIs: what a party allocates is one pair of SAs, whatever is agreed to run
+// over it.
+//
+// So the mechanisms are separated first and only then their parameters, which is
+// the whole of the fix this once needed: splitting the value on `;` alone left
+// the last parameter of each mechanism carrying the next one's name -
+// `spi-s=208007319,ipsec-3gpp` - which is not a number, and filled in whatever
+// the first mechanism did not have from the ones after it, which is a mechanism
+// no party offered.
+//
+// The one read is the first that names an SPI, so a header leading with a
+// mechanism that is not IPsec at all is stepped over rather than read as the
+// answer. Where a Security-Server offers several, RFC 3329 has both ends take
+// the one with the highest `q` and this takes the first, which differs only for
+// a P-CSCF that answers with more than the mechanism it chose. Within a
+// mechanism the first occurrence of a parameter wins, and values are lowercased
+// because the algorithm names above are compared against.
 func espMech(header string) map[string]string {
-	mech := map[string]string{}
-	for _, part := range strings.Split(header, ";") {
-		name, value, ok := strings.Cut(part, "=")
-		if !ok {
-			continue
+	for _, mechanism := range strings.Split(header, ",") {
+		mech := map[string]string{}
+		// the mechanism name is the part before the first `;` and has no `=` in
+		// it, so it falls out of the loop below on its own
+		for _, part := range strings.Split(mechanism, ";") {
+			name, value, ok := strings.Cut(part, "=")
+			if !ok {
+				continue
+			}
+			name = strings.ToLower(strings.TrimSpace(name))
+			if _, dup := mech[name]; !dup {
+				mech[name] = strings.ToLower(strings.TrimSpace(value))
+			}
 		}
-		name = strings.ToLower(strings.TrimSpace(name))
-		if _, dup := mech[name]; !dup {
-			mech[name] = strings.ToLower(strings.TrimSpace(value))
+		if len(espSPIs(mech)) > 0 {
+			return mech
 		}
 	}
-	return mech
+	return nil
 }
 
 // The two SPIs of one mechanism, as the SA table spells an SPI. RFC 3329 writes

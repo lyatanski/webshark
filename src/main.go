@@ -67,7 +67,7 @@ func main() {
 		if len(os.Args) != 3 {
 			log.Fatal("usage: webshark -esp <capture>")
 		}
-		records, err := espSAs(env("TSHARK", "tshark"), os.Args[2])
+		records, err := espFile(env("SHARKD", "sharkd"), os.Args[2])
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -79,7 +79,7 @@ func main() {
 
 	srv := &server{dir: env("CAPTURES", "/captures")}
 	srv.pool = newPool(
-		env("SHARKD", "sharkd"), env("TSHARK", "tshark"), srv.dir,
+		env("SHARKD", "sharkd"), srv.dir,
 		atoi(env("SHARKD_SESSIONS", "4"), 4),
 		time.Duration(atoi(env("SHARKD_IDLE", "600"), 600))*time.Second,
 	)
@@ -366,8 +366,8 @@ func (s *server) frames(w http.ResponseWriter, r *http.Request) {
 	type row struct {
 		Num     int      `json:"n"`
 		Columns []string `json:"c"`
-		Bg string `json:"bg,omitempty"`
-		Fg string `json:"fg,omitempty"`
+		Bg      string   `json:"bg,omitempty"`
+		Fg      string   `json:"fg,omitempty"`
 	}
 	rows := make([]row, len(in))
 	for i, f := range in {
