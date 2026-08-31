@@ -8,8 +8,9 @@ package main
 // longer than `idle`. Nothing else here is clever - a request is a line in and
 // a line out, serialized per session by a mutex.
 //
-// A session starting is also where a capture's own ESP keys are put into it, so
-// that protected Gm traffic dissects: see esp.go.
+// A capture's own ESP keys need nothing from this file: plugins/ims_esp recovers
+// them inside sharkd, during the load below, so that protected Gm traffic
+// dissects.
 
 import (
 	"bufio"
@@ -17,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,27 +144,6 @@ func (p *pool) spawn(file string) (*session, error) {
 		s.close()
 		return nil, err
 	}
-
-	// The capture's own ESP SAs, read back out of the session that has just
-	// loaded it (esp.go) and put into the same preference table Wireshark's ESP
-	// SAs dialog writes - `setconf` takes the `uat:` syntax that tshark's -o
-	// does, one record per call. Both halves are this one session, so they are
-	// one after the other rather than at once, and that is soon enough: sharkd
-	// dissects a frame when it is asked for one, and this session is answering
-	// nothing until spawn returns it.
-	records, err := espSAs(s)
-	if err != nil {
-		log.Printf("esp: %s: %v", file, err)
-	}
-	for _, record := range records {
-		if _, err := s.do("setconf", map[string]any{"name": "uat:esp_sa", "value": record}); err != nil {
-			log.Printf("esp: %s: %v", file, err)
-			break
-		}
-	}
-	if len(records) > 0 {
-		log.Printf("esp: %s: %d SAs from the capture", file, len(records))
-	}
 	return s, nil
 }
 
@@ -178,9 +157,12 @@ func (p *pool) spawn(file string) (*session, error) {
 //   - the process is not pooled, so scanning a directory cannot evict the capture
 //     the user has open - the pool holds four sessions and a directory can hold
 //     any number of files.
-//   - no ESP SAs. They cost another read of the capture, and buy a scan nothing:
-//     what a protected frame carries is not part of the answer to "which
-//     protocols are in this file" that a list can afford.
+//
+// It pays for plugins/ims_esp all the same - the fields that plugin asks for are
+// what make any load build a dissection tree - and buys nothing with it: what a
+// protected frame carries is not part of the answer to "which protocols are in
+// this file". Bounded by `frames` above and cached by the scanner, so it is left
+// to do that rather than turned off for this one session.
 func (p *pool) hierarchy(file string, frames int) (json.RawMessage, error) {
 	s, err := p.start()
 	if err != nil {

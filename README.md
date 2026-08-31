@@ -16,8 +16,8 @@ browser, with no client to install.
 - **Captures list** — sizes, capture times and a protocol summary per file;
   upload by drag-and-drop, download, close.
 - **IMS extras** — a Lua plugin relating SIP to Diameter by subscriber identity,
-  and ESP SAs recovered from a capture's own AKA registration so protected Gm
-  traffic dissects (see `src/esp.go`).
+  and a C plugin recovering ESP SAs from a capture's own AKA registration, so
+  protected Gm traffic dissects with nothing configured.
 
 ## Run
 
@@ -42,9 +42,13 @@ Configuration is environment variables, all with the defaults shown:
 
 ## Build
 
-`docker build .` builds sharkd from Wireshark master with Lua enabled and the
-server around it; `--build-arg WIRESHARK=v4.6.7` pins a release instead. CI
-rebuilds and pushes the image on every push.
+`docker build .` builds sharkd from Wireshark master with Lua and plugins
+enabled, `plugins/ims_esp` against it, and the server around both;
+`--build-arg WIRESHARK=v4.6.7` pins a release instead. CI rebuilds and pushes
+the image on every push.
+
+The plugin is built in its own layer after Wireshark, so editing it costs one
+compile and a link rather than another hour.
 
 ## Layout
 
@@ -52,9 +56,11 @@ rebuilds and pushes the image on every push.
 src/main.go      HTTP handlers and the JSON API (documented at the top of the file)
 src/sharkd.go    one sharkd per open capture, and the pool that ends them
 src/capture.go   capture times from the file header, cached protocol scans
-src/esp.go       ESP SAs from a capture's SIP registration; also `webshark -esp <file>`
 src/web/         the UI - no framework, no build step: app.js is what the browser runs
 plugins/ims.lua  SIP ↔ Diameter correlation
+plugins/ims_esp/ ESP SAs from a capture's own SIP registration, in C: a
+                 postdissector that installs them as the file is read, so sharkd,
+                 tshark and Wireshark alike need telling nothing
 preferences      hidden port columns the flow view labels arrows with, plus ESP settings
 colorfilters     coloring rules
 ```

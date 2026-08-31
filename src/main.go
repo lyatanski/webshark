@@ -24,16 +24,13 @@ package main
 // 20x the size of the columns the list actually draws. That one is decoded and
 // trimmed to what the UI reads.
 //
-// There is one thing to run instead of the server:
-//
-//	webshark -esp <capture>          the capture's ESP SAs, as esp_sa records
-//
-// which is the list every sharkd started here is given anyway (esp.go).
+// A capture's ESP security associations are not in here at all: plugins/ims_esp
+// recovers them inside sharkd as a file is read, so protected Gm traffic
+// dissects without this server doing anything about it.
 
 import (
 	"embed"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -60,23 +57,6 @@ type server struct {
 }
 
 func main() {
-	// `webshark -esp <capture>` prints the ESP SAs of one capture and exits, for
-	// the programs next to this one that read Wireshark's esp_sa file instead of
-	// asking a server. A path, not a name in CAPTURES: this is a command line.
-	if len(os.Args) > 1 && os.Args[1] == "-esp" {
-		if len(os.Args) != 3 {
-			log.Fatal("usage: webshark -esp <capture>")
-		}
-		records, err := espFile(env("SHARKD", "sharkd"), os.Args[2])
-		if err != nil {
-			log.Fatal(err)
-		}
-		for _, record := range records {
-			fmt.Println(record)
-		}
-		return
-	}
-
 	srv := &server{dir: env("CAPTURES", "/captures")}
 	srv.pool = newPool(
 		env("SHARKD", "sharkd"), srv.dir,

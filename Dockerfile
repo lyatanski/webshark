@@ -1,10 +1,11 @@
 # webshark - Wireshark in the browser: a static page and a Go server over
 # sharkd, built here from Wireshark master with Lua enabled.
 #
-# plugins/ims.lua relates SIP to Diameter by the subscriber identity
-# WIRESHARK_PLUGIN_DIR is what makes that directory the plugin directory: it
-# takes precedence over the compiled-in path, and Lua plugin loading walks
-# subdirectories, so a mounted tree works too.
+# Two plugins are built in here: plugins/ims.lua, which relates SIP to Diameter
+# by the subscriber identity, and plugins/ims_esp, a C dissector plugin that
+# recovers a capture's ESP keys from its own SIP registrations. The Lua one is
+# interpreted and just gets copied; the C one is compiled against this Wireshark,
+# so it goes into the source tree below before cmake sees it.
 #
 # Wireshark tracks master, rebuilt on a schedule by CI to pick up upstream
 # changes. To pin it instead:
@@ -26,9 +27,10 @@ RUN git clone --depth=1 --branch ${WIRESHARK} \
         https://gitlab.com/wireshark/wireshark.git /src
 
 # ENABLE_PCAP=OFF because nothing in this image captures; reading a file is
-# wiretap's job, not libpcap's. ENABLE_PLUGINS=OFF drops *binary* plugins only:
-# the plugin directory itself stays compiled in as long as Lua is on, which is
-# the whole point here. Optional Wireshark features are exactly what the -dev
+# wiretap's job, not libpcap's. ENABLE_PLUGINS=ON is for plugins/ims_esp, and
+# has to be on for this build rather than the next one: it decides HAVE_PLUGINS
+# in config.h, and changing that afterwards would rebuild all of libwireshark
+# instead of one plugin. Optional Wireshark features are exactly what the -dev
 # packages above provide - nothing else is looked for.
 RUN cmake -S /src -B /build \
         -D CMAKE_BUILD_TYPE=Release \
@@ -42,10 +44,25 @@ RUN cmake -S /src -B /build \
         -D BUILD_udpdump=OFF \
         -D ENABLE_LUA=ON \
         -D ENABLE_PCAP=OFF \
-        -D ENABLE_PLUGINS=OFF \
+        -D ENABLE_PLUGINS=ON \
         -D ENABLE_WERROR=OFF \
-    && cmake --build /build --parallel $(nproc) \
-    && DESTDIR=/out cmake --install /build --strip
+    && cmake --build /build --parallel $(nproc)
+
+# The ESP plugin, built into the tree above rather than out of it, because an
+# epan plugin compiles against Wireshark's own private headers and only the
+# source tree has them. CMakeListsCustom.txt is upstream's hook for exactly this
+# (see CMakeListsCustom.txt.example) and takes a directory under /src.
+#
+# It is its own layer, and after the build above, so that editing the plugin
+# rebuilds the plugin: cmake re-runs to pick up the new directory, and the target
+# named here is the only thing ninja then has to compile. HAVE_PLUGINS is already
+# what it will be, so nothing else is stale.
+COPY plugins/ims_esp /src/plugins/epan/ims_esp
+RUN printf 'set(CUSTOM_PLUGIN_SRC_DIR plugins/epan/ims_esp)\n' > /src/CMakeListsCustom.txt \
+    && cmake -S /src -B /build \
+    && cmake --build /build --parallel $(nproc) --target ims_esp \
+    && DESTDIR=/out cmake --install /build --strip \
+    && find /out -path '*/plugins/*' -name '*.so' ! -name 'ims_esp.so' -delete
 
 # ------------------------------------------------------------------ api ------
 FROM golang:alpine AS api
@@ -66,7 +83,17 @@ RUN apk add --no-cache \
 
 COPY --from=sharkd /out/usr/local /usr/local
 COPY --from=api /webshark /usr/bin/
-COPY plugins/ /plugins/
+# The Lua plugins by copy, and the ESP plugin built above by link. Binary plugins
+# are looked for in a subdirectory of the plugin directory named for the Wireshark
+# version, and WIRESHARK_PLUGIN_DIR below replaces the compiled-in plugin path
+# rather than adding to it - so the installed one is linked in under whatever that
+# version turned out to be, and /plugins stays the single directory that holds
+# everything. Mounting a tree over all of /plugins hides the link with it; mount
+# over /plugins/ims.lua instead.
+COPY plugins/*.lua /plugins/
+RUN for dir in /usr/local/lib/wireshark/plugins/*/; do \
+        ln -s "$dir" "/plugins/$(basename "$dir")"; \
+    done
 # Wireshark's global preferences file, which is read from the data directory of
 # the install above. Two things are in it: the hidden port columns the
 # sequence-diagram view labels its arrows with, and the ESP preferences that let
