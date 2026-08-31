@@ -43,8 +43,8 @@ gui.column.hide: 4,6
 #   pads any other way is not guessed at.
 # - enable_encryption_decode is the keyed path, over the SAs in the esp_sa table:
 #   it decrypts (or, for a NULL SA, just trims the trailer) and dissects what
-#   comes out. src/esp.go fills that table from the capture, so it covers
-#   encrypted Gm as well - see the comment at the top of that file.
+#   comes out. plugins/ims_esp fills that table from the capture, so it covers
+#   encrypted Gm as well - see the comment at the top of that plugin.
 #
 # enable_authentication_check is the check on all of that: with an SA matched it
 # verifies the ICV with the SA's integrity key and says so in the tree, which is
