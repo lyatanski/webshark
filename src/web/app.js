@@ -20,8 +20,8 @@ const OVER = 8     // rows drawn above and below the viewport
 // fixed widths for the columns Wireshark keeps narrow, the rest to the last one -
 // which is Info, and wants everything it can get
 const WIDE = {
-  'No.': 76, Time: 112, Delta: 96, Source: 150,
-  Destination: 150, Protocol: 76, Length: 64,
+  'No.': 76, Time: 112, Delta: 96, Source: 150, SrcPort: 70,
+  Destination: 150, DstPort: 70, Protocol: 76, Length: 64,
 }
 const INFO_MIN = 160  // below this the 1fr column would hit 0 and vanish
 // the flow view's gutter is the list's own No. and Time columns, so a frame's
