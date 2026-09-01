@@ -2,15 +2,16 @@
 # installed next to it - so every program in this image starts with these columns.
 #
 # The only reason the file exists: Source and Destination carry addresses but not
-# ports, and the sequence-diagram view wants both, as Wireshark's own flow graph
-# labels each arrow end with its port. sharkd will not add a column on request -
-# `frames` takes no column list, and `setconf gui.column.format` after startup
-# renames the columns without changing what they hold - so the ports have to be
-# columns from the very start.
+# ports, and both the packet list and the sequence-diagram view want them, as
+# Wireshark's own flow graph labels each arrow end with its port. sharkd will not
+# add a column on request - `frames` takes no column list, and `setconf
+# gui.column.format` after startup renames the columns without changing what they
+# hold - so the ports have to be columns from the very start.
 #
-# They are hidden columns: `status` reports them "visible": false, the packet list
-# skips them, and the flow view reads the ports out of the rows it already has.
-# Everything else below is Wireshark's default column set, unchanged.
+# SrcPort/DstPort sit right after Source/Destination so the packet list shows
+# address and port together; the flow view reads the same columns out of the rows
+# it already has. Everything else below is Wireshark's default column set,
+# unchanged.
 
 gui.column.format:
 	"No.", "%m",
@@ -22,10 +23,6 @@ gui.column.format:
 	"Protocol", "%p",
 	"Length", "%L",
 	"Info", "%i"
-
-# 1-indexed into the list above, hence the two port columns. The format-based
-# spelling of this preference (gui.column.hidden) is deprecated in master.
-gui.column.hide: 4,6
 
 # ESP, because Gm is protected with it: 3GPP runs IPsec ESP in transport mode
 # between the UE and the P-CSCF (TS 33.203), so every SIP message after the
