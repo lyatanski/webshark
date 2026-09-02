@@ -1,0 +1,2 @@
+# docker build -f Dockerfile.android --target apk --output type=local,dest=out .
+out/
