@@ -1,0 +1,8 @@
+# Written by Dockerfile.android, not by hand - see README.md
+app/src/main/jniLibs/
+app/src/main/assets/
+
+.gradle/
+build/
+app/build/
+local.properties

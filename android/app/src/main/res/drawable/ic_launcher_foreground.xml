@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The fin alone from the mark in src/web/index.html, whose viewBox is 24 wide:
+     there the fin is the negative space inside a rounded square, so this traces
+     the same two contours directly and drops the frame. The waterline is clipped
+     to x 3.5..20.5 so the whole mark fits the adaptive icon's 66dp safe circle once
+     scaled by 3.1 and centred on its own bounds. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:translateX="16.8"
+        android:translateY="17.9"
+        android:scaleX="3.1"
+        android:scaleY="3.1">
+        <path
+            android:fillColor="#12272E"
+            android:pathData="M20.5 16.95H17.63c-0.335 -0.796 -2.57 -6.47 0.283 -10.9a0.516 0.517 0 0 0 -0.443 -0.794c-5.24 0.0827 -8.2 3.19 -9.74 6.21 -1.35 2.64 -1.63 4.91 -1.69 5.53H3.5V18.031H6.48a0.516 0.517 0 0 0 0.514 -0.477s0.226 -2.8 1.66 -5.62c1.34 -2.62 3.67 -5.17 7.91 -5.57c-2.62 5.24 0.248 11.4 0.248 11.4a0.516 0.517 0 0 0 0.469 0.301H20.5z" />
+    </group>
+</vector>

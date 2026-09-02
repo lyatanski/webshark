@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">webshark</string>
+    <string name="service_channel">Capture server</string>
+    <string name="service_running">Reading captures</string>
+    <string name="open_capture">Open in webshark</string>
+    <string name="server_failed">The capture server did not start. See logcat for the reason.</string>
+</resources>

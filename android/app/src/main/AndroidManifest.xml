@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Loopback is still a socket, and a socket still wants this. Nothing here
+         talks to a network: the server binds 127.0.0.1 and the WebView only ever
+         loads from it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:extractNativeLibs="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:launchMode="singleTask">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- How a capture gets in. There is no drag-and-drop on a phone, so
+                 the web UI's own upload has nothing to hook onto: instead the
+                 app takes a capture the way anything else on Android takes a
+                 file, by being opened or shared one.
+
+                 Four filters, because a capture announces itself in more than
+                 one way and no single way can be relied on. Android knows no
+                 MIME type for any capture extension, so what arrives depends
+                 entirely on who is handing the file over. -->
+
+            <!-- By type, when whatever holds the file will say what it is. A
+                 capture has an IANA type almost nobody sends and a handful of
+                 conventional ones, so all of them are named rather than guessed
+                 between. -->
+            <intent-filter android:label="@string/open_capture">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/vnd.tcpdump.pcap" />
+                <data android:mimeType="application/vnd.tcpdump.pcapng" />
+                <data android:mimeType="application/x-pcapng" />
+                <data android:mimeType="application/x-pcap" />
+                <data android:mimeType="application/pcap" />
+                <data android:mimeType="application/x-libpcap" />
+                <data android:mimeType="application/cap" />
+                <data android:mimeType="application/x-cap" />
+                <data android:mimeType="application/x-snoop" />
+            </intent-filter>
+
+            <!-- By name, when it will not. The extension is what a file manager
+                 matched on to offer an app in the first place, and what it then
+                 puts in the intent is whatever its own table says - often
+                 application/gzip for a .pcap.gz, text/plain from the careless.
+                 So this filter takes any type and matches the name instead:
+                 with a path pattern present, */* is not a type filter.
+
+                 Two things about the shape of it. The path is only looked at
+                 when the filter also names a host, which rules out file:// URIs
+                 (they have no authority) - those are left to the filters above.
+                 And android:pathPattern is not a regular expression: its .* is
+                 greedy and never backtracks, so `.*\.pcap` stops at the first
+                 dot in the whole path and fails on any name with two. Hence the
+                 same suffix again per dot it may have to step over, which is
+                 the standing workaround for it. -->
+            <intent-filter android:label="@string/open_capture">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+
+                <data android:pathPattern=".*\\.pcap" />
+                <data android:pathPattern=".*\\.pcapng" />
+                <data android:pathPattern=".*\\.cap" />
+                <data android:pathPattern=".*\\.ntar" />
+                <data android:pathPattern=".*\\.pcap\\.gz" />
+                <data android:pathPattern=".*\\.pcapng\\.gz" />
+                <data android:pathPattern=".*\\.cap\\.gz" />
+
+                <data android:pathPattern=".*\\..*\\.pcap" />
+                <data android:pathPattern=".*\\..*\\.pcapng" />
+                <data android:pathPattern=".*\\..*\\.cap" />
+                <data android:pathPattern=".*\\..*\\.ntar" />
+                <data android:pathPattern=".*\\..*\\.pcap\\.gz" />
+                <data android:pathPattern=".*\\..*\\.pcapng\\.gz" />
+                <data android:pathPattern=".*\\..*\\.cap\\.gz" />
+
+                <data android:pathPattern=".*\\..*\\..*\\.pcap" />
+                <data android:pathPattern=".*\\..*\\..*\\.pcapng" />
+                <data android:pathPattern=".*\\..*\\..*\\.cap" />
+                <data android:pathPattern=".*\\..*\\..*\\.ntar" />
+                <data android:pathPattern=".*\\..*\\..*\\.pcap\\.gz" />
+                <data android:pathPattern=".*\\..*\\..*\\.pcapng\\.gz" />
+                <data android:pathPattern=".*\\..*\\..*\\.cap\\.gz" />
+            </intent-filter>
+
+            <!-- And by neither. A download, a mail attachment or anything else
+                 coming through a provider that admits to nothing arrives as
+                 application/octet-stream over a content URI with no name in its
+                 path, so there is nothing left to match on but "some bytes".
+                 The cost is that webshark is offered for every unnamed binary
+                 on the device; the alternative is that a capture out of Gmail
+                 or the Downloads provider cannot be opened at all. -->
+            <intent-filter android:label="@string/open_capture">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <!-- Sharing, which carries no URI to match a name against: the type
+                 is all there is, so this is the first filter's list and the
+                 catch-all together. -->
+            <intent-filter android:label="@string/open_capture">
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.tcpdump.pcap" />
+                <data android:mimeType="application/vnd.tcpdump.pcapng" />
+                <data android:mimeType="application/x-pcapng" />
+                <data android:mimeType="application/x-pcap" />
+                <data android:mimeType="application/pcap" />
+                <data android:mimeType="application/x-libpcap" />
+                <data android:mimeType="application/cap" />
+                <data android:mimeType="application/x-cap" />
+                <data android:mimeType="application/x-snoop" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".ServerService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+</manifest>

@@ -5,9 +5,14 @@
    stamps data-theme on <html> - so the attribute has to win in both directions,
    hence the :not() on the media query rather than a plain override. */
 :root {
-  --row: 20px;                    /* must match ROW in app.js; #viewer.flow and #files
-                                      rescope this to FROW/CROW instead of naming a
-                                      second and third row variable */
+  --row: 20px;                    /* the height of a row, which #viewer.flow, #files
+                                      and the narrow window all rescope rather than
+                                      naming a second row variable each. app.js
+                                      places rows at multiples of it and reads it
+                                      back off the element - see measure() */
+  --narrow: 0;                    /* 1 below the breakpoint, for app.js to read
+                                     off #viewer - see measure(); the width the
+                                     page reflows at stays in this file alone */
   --headrow: 24px;                 /* header bar height, shared by #filehead and #cols
                                        (list and flow mode alike) - kept off --row so
                                        each view's own row density doesn't move it */
@@ -52,7 +57,7 @@ html, body { height: 100%; margin: 0; }
 body {
   display: flex; flex-direction: column;
   background: var(--bg); color: var(--fg);
-  font: 13px/1.4 system-ui, sans-serif;
+  font: 12px/1.4 var(--mono);
 }
 
 /* ------------------------------------------------------------------ header */
@@ -134,8 +139,9 @@ button:hover { border-color: var(--sel); }
    are: #filehead is a sticky header row (like #cols) and #filecanvas is the
    scrolled surface, populated with a small pool of recycled .caprow divs
    positioned by `top` - see fileSlot()/filesDraw() in app.js. */
-/* rescoping --row, as #viewer.flow does for FROW - see the :root comment - lets
-   .caprow (a var(--row) consumer) grow with it; must match CROW in app.js.
+/* rescoping --row, as #viewer.flow does - see the :root comment - lets .caprow
+   (a var(--row) consumer) grow with it; must match CROW in app.js, this being the
+   one list app.js does not measure, its rows never moving.
    #filehead sits on --headrow instead, so the header bar's height doesn't ride
    along with it - see the :root comment. */
 #files { --row: 26px; display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
@@ -187,6 +193,11 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 #cols, .row {
   display: grid; grid-template-columns: var(--grid);
 }
+/* the fixed columns' total plus a workable Info, from head() - a property rather
+   than the inline style it used to be, so the narrow layout below can lower it.
+   The flow view keeps setting its own inline, layout() being the only thing that
+   knows the diagram's width. */
+#viewer:not(.flow) #cols, #viewer:not(.flow) #canvas { min-width: var(--minw); }
 .row { height: var(--row); line-height: var(--row); }
 /* inside the scroller, so the header cannot drift out of line with the rows */
 #cols {
@@ -198,6 +209,7 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
   padding: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 #cols > span.num, .row > span.num { text-align: right; }
+.row .port { color: var(--dim); }   /* source/destination pair: the port half, dimmed */
 /* height rather than flex-basis, or the browser's own resize handle - which is
    the whole splitter implementation - would have nothing to set */
 #list {
@@ -209,16 +221,81 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 .row { position: absolute; left: 0; right: 0; font: 12px var(--mono); cursor: default; }
 .row:hover { background: var(--head); }
 .row.sel, .row.sel:hover { background: var(--sel); color: var(--selfg); }
+.row.sel .port { color: inherit; }   /* dimmed port, but not against the sel background */
 .row.gap { color: var(--dim); }                      /* page still in flight */
+
+/* ------------------------------------------------------------ narrow window */
+
+/* At the width the byte pane gives up its place beside the detail tree - the same
+   threshold, further down this file: one window width, one narrow mode - a list
+   row gives up being one line of columns. Info is always the last column and the
+   one worth the most, so it drops to a second line of its own, full width, and
+   the columns before it keep the first. The row is two lines tall instead of one:
+   app.js places rows at multiples of --row, so --row doubles and the two lines
+   are the grid's own rows inside it - which is also why the line box has to be
+   reset to half of it, the rows being one line of text each.
+   --gridn and --minwn are head()'s narrow pair of --grid and --minw: the same
+   columns without Info, one of them stretching to fill the row.
+   The header stays a single line. It loses its Info title with the column, the
+   second line below it being unmistakable without one. */
+@media (max-width: 1100px) {
+  #viewer { --narrow: 1; }              /* both views are narrow; only the list reflows */
+  #viewer:not(.flow) { --row: 40px; }   /* two of the wide list's rows - keep it even */
+  #viewer:not(.flow) #cols, #viewer:not(.flow) .row { grid-template-columns: var(--gridn); }
+  #viewer:not(.flow) #cols, #viewer:not(.flow) #canvas { min-width: var(--minwn); }
+  #viewer:not(.flow) #cols > span:last-child { display: none; }
+  #viewer:not(.flow) .row {
+    grid-template-rows: repeat(2, calc(var(--row) / 2));
+    line-height: calc(var(--row) / 2);
+  }
+  /* From the second track rather than the first, which leaves the frame number
+     hanging out to the left of the two lines it numbers - that and the dimmed ink
+     being all that marks where one row ends and the next begins, the list drawing
+     no rules between them. -1 rather than the track count, which is the capture's
+     own column list; auto-placement puts it on the line below, the first one with
+     room for it.
+     Dim as .port above is, and for the same reason: the first line is the frame
+     itself and this is what it says. A coloring rule's ink gives way to it - every
+     rule in the file is dark on a pale background, which dim ink reads over - but
+     the selection's does not, grey on the blue reading as disabled rather than as
+     second in line. */
+  #viewer:not(.flow) .row > span:last-child { grid-column: 2 / -1; color: var(--dim); }
+  #viewer:not(.flow) .row.sel > span:last-child { color: inherit; }
+
+  /* A frame picked on a screen this size means the dissection is what was wanted,
+     and the rows above it have done their job: either view collapses to the one
+     row being dissected, held at the top, and the tree opens out under it into
+     everything that is left. The scrollport is that row exactly, so nothing can
+     be scrolled away from it downwards; app.js puts it there, in reveal(). The
+     way back is the row itself: clicking the selected row deselects, and the
+     :not(.picked) rule above hands the window back, this row at the top of it.
+
+     Both views keep their header over the row. The diagram's columns are its
+     addresses, and an arrow between two unnamed lifelines says nothing; the
+     list's are what the halves of a folded row are, which one row out of its
+     list needs saying about it more than a screenful did, not less. So the row
+     lands at scrollTop = i * --row, which puts it directly under that sticky
+     header in either view.
+     Sideways it still scrolls, and has to: the diagram is far wider than a screen
+     this size, and so is the list once it is narrower than its own columns.
+     max-height as well as height because the splitter is the browser's own resize
+     handle, which writes an inline height - and a list dragged taller while the
+     window was wide has to collapse anyway once it narrows. */
+  #viewer { --strip: calc(var(--headrow) + var(--row) + 1px); }   /* the titles, the
+    row, and the border the list draws under itself */
+  #viewer.picked > #list {
+    height: var(--strip); max-height: var(--strip);
+    overflow-x: auto; overflow-y: hidden; resize: none;
+  }
+}
 
 /* --------------------------------------------------- sequence diagram */
 
 /* Wireshark's flow graph over the same rows: a column per address, an arrow per
    frame. app.js owns the geometry - every position here comes from it in pixels,
    and the gutter widths below have to add up to its GUT. */
-/* rescoping --row here moves .frow alone now - #cols is on --headrow, not --row,
-   so the header bar keeps its own height instead of following FROW; --row itself
-   must still match FROW in app.js */
+/* rescoping --row here moves .frow alone - #cols is on --headrow, not --row, so
+   the header bar keeps its own height instead of following the diagram's rows */
 #viewer.flow { --row: 28px; }
 #viewer.flow #cols { display: block; }
 #viewer.flow #cols > .fnode { padding: 0; }   /* a node label is sized to its lane;
@@ -356,12 +433,15 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 #tree, #bytes { overflow: auto; padding: 4px 0; contain: layout paint; background: var(--pane); }
 #tree { flex: 1; border-right: 1px solid var(--line); }
 /* a hex line is offset + 16 bytes + the ASCII column: 72 characters, so that is
-   what the pane is worth. Below that the two stack instead of squeezing. */
+   what the pane is worth. Below that there is no room for it beside the tree, and
+   no room under it either that the tree would not miss more - so it goes. */
 #bytes { flex: 0 0 74ch; }
+/* the width the list reflows at too - see the narrow window section above.
+   app.js is not told: bytes() fills #hex as it always did, and a window growing
+   back past this width has the pane it left, filled, with nothing to re-select. */
 @media (max-width: 1100px) {
-  #panes { flex-direction: column; }
-  #tree { border-right: 0; border-bottom: 1px solid var(--line); }
-  #bytes { flex: 0 0 40%; }
+  #bytes { display: none; }
+  #tree { border-right: 0; }   /* nothing to its right to be set off from now */
 }
 
 .n { white-space: nowrap; font: 12px var(--mono); }

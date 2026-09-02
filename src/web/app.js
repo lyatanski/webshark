@@ -12,17 +12,22 @@
 // column per address and an arrow per frame. Both read the same pages, so the
 // header's List/Flow button is a repaint and nothing else.
 
-const ROW = 20     // px per list row, matches --row in style.css
-const FROW = 28    // ...and per flow row, matches --row as #viewer.flow rescopes it
-const CROW = 26    // ...and per capture-list row, matches --row as #files rescopes it
+// The list's row height is style.css's --row on #viewer, which the flow view
+// rescopes and the narrow layout doubles - so it is measured off the element
+// rather than kept here as a second copy of a number that now moves on its own.
+let ROW = 20       // ...until measure() reads the real one, which it does before any paint
+const CROW = 26    // the capture list's own row, matching --row as #files rescopes it
 const PAGE = 200   // frames per /api/frames call
 const OVER = 8     // rows drawn above and below the viewport
 // fixed widths for the columns Wireshark keeps narrow, the rest to the last one -
 // which is Info, and wants everything it can get
+const ADDR = 'Source → Destination'   // the folded pair's own title - see columns()
 const WIDE = {
   'No.': 76, Time: 112, Delta: 96, Source: 150, SrcPort: 70,
   Destination: 150, DstPort: 70, Protocol: 76, Length: 64,
+  [ADDR]: 320,
 }
+const wide = c => WIDE[c] || 110
 const INFO_MIN = 160  // below this the 1fr column would hit 0 and vanish
 // the flow view's gutter is the list's own No. and Time columns, so a frame's
 // number and time sit in the same place whichever view draws it
@@ -65,12 +70,32 @@ let slots = []       // recycled row elements
 let fileSlots = []   // ...and the capture list's own pool
 
 const flowing = () => S.view === 'flow'
-const rowH = () => flowing() ? FROW : ROW
+
+// --row moves with the view (the flow view rescopes it) and with the window (the
+// narrow layout doubles it), and every row is placed at a multiple of it - so it
+// is read back after either changes, along with --narrow, which is style.css
+// saying which layout that was. True if the height moved, which is the caller's
+// cue to put the rows back where the new one wants them.
+let NARROW = false
+function measure() {
+  const css = getComputedStyle($('#viewer'))
+  NARROW = css.getPropertyValue('--narrow').trim() === '1'
+  const px = parseFloat(css.getPropertyValue('--row'))
+  if (!px || px === ROW) return false
+  ROW = px
+  return true
+}
+
+// ...and at that width a picked frame leaves either view a header and one row,
+// holding the row being dissected while the tree has the rest of the window.
+// Nothing scrolls to that row: it is put at the top and kept there.
+const pinned = () => NARROW && $('#viewer').classList.contains('picked')
 
 // the list lays its columns out in a grid, the flow view as spans over its gutter;
 // these carry the two the views share so .num/.ft can size off the same numbers
 $('#viewer').style.setProperty('--numw', WIDE['No.'] + 'px')
 $('#viewer').style.setProperty('--timew', WIDE.Time + 'px')
+measure()   // the window may already be narrow, and a paint can come before a resize
 
 // No. reads as numeric data, so both views set it off from the left-aligned
 // text columns.
@@ -83,13 +108,32 @@ function span(cls, text) {
   return el
 }
 
+// the list's folded address column (see columns()): source and destination
+// address, each with its port dimmed against it, an arrow between the two
+function pair() {
+  const el = span()
+  el.append(span(), span('port'), span('arrow'), span(), span('port'))
+  return el
+}
+
+function fillPair(el, row) {
+  const [sa, sp, arrow, da, dp] = el.children
+  const src = row ? cell(row, 'src') : '', dst = row ? cell(row, 'dst') : ''
+  const sport = row ? cell(row, 'sport') : '', dport = row ? cell(row, 'dport') : ''
+  sa.textContent = src
+  sp.textContent = sport ? ':' + sport : ''
+  arrow.textContent = row ? ' → ' : ''
+  da.textContent = dst
+  dp.textContent = dport ? ':' + dport : ''
+}
+
 // ------------------------------------------------------------- packet list ---
 
 function height() {
   // an unfiltered capture knows its length from `status`; a filtered one only
   // finds out when a page comes back short, so leave a page of room to scroll
   // into until then
-  return (S.count + (S.end ? 0 : PAGE)) * rowH()
+  return (S.count + (S.end ? 0 : PAGE)) * ROW
 }
 
 function rowAt(i) {
@@ -137,7 +181,7 @@ function slot(i) {
       el.append(span('num'), span('ft'), line)
     } else {
       el.className = 'row'
-      for (const title of S.cols) el.appendChild(span(numCol(title)))
+      S.cols.forEach((title, c) => el.appendChild(S.vis[c] === 'addr' ? pair() : span(numCol(title))))
     }
     el.addEventListener('mousedown', () => {
       const i = +el.dataset.i
@@ -157,17 +201,16 @@ function paint() {
 }
 
 function draw() {
-  const H = rowH()
   if (flowing()) layout()
   canvas.style.height = height() + 'px'
   const last = S.count + (S.end ? 0 : PAGE)
-  const first = Math.max(0, Math.floor(list.scrollTop / H) - OVER)
-  const upto = Math.min(last, first + Math.ceil(list.clientHeight / H) + OVER * 2)
+  const first = Math.max(0, Math.floor(list.scrollTop / ROW) - OVER)
+  const upto = Math.min(last, first + Math.ceil(list.clientHeight / ROW) + OVER * 2)
 
   let s = 0
   for (let i = first; i < upto; i++, s++) {
     const row = rowAt(i), el = slot(s)
-    el.style.top = i * H + 'px'
+    el.style.top = i * ROW + 'px'
     el.dataset.i = i
     el.hidden = false
     el.classList.toggle('sel', i === S.selIdx)
@@ -177,7 +220,8 @@ function draw() {
     else {
       const cells = el.children
       for (let c = 0; c < S.vis.length; c++) {
-        cells[c].textContent = row ? (row.c[S.vis[c]] || '') : (c === 0 ? '…' : '')
+        if (S.vis[c] === 'addr') fillPair(cells[c], row)
+        else cells[c].textContent = row ? (row.c[S.vis[c]] || '') : (c === 0 ? '…' : '')
       }
     }
   }
@@ -185,12 +229,13 @@ function draw() {
 }
 
 function reveal(i) {
-  const H = rowH()
   // the height the canvas is *about* to be drawn at: scrolling into a canvas that
   // has not been drawn yet - opening a link with a frame in it - clamps to 0
   canvas.style.height = height() + 'px'
-  if (i * H < list.scrollTop) list.scrollTop = i * H
-  const bottom = H + (i + 1) * H    // the sticky header owns the first row
+  // the only row there is, directly under the header band - see style.css
+  if (pinned()) { list.scrollTop = i * ROW; return }
+  if (i * ROW < list.scrollTop) list.scrollTop = i * ROW
+  const bottom = ROW + (i + 1) * ROW    // the sticky header owns the first row
   if (bottom - list.scrollTop > list.clientHeight) list.scrollTop = bottom - list.clientHeight
 }
 
@@ -241,8 +286,7 @@ function move(delta) {
 function columns(st) {
   const info = st.column_info ||
     (st.columns || []).map(title => ({ title, format: '', visible: true }))
-  S.vis = info.map((_, i) => i).filter(i => info[i].visible !== false)
-  S.cols = S.vis.map(i => info[i].title)
+  const shown = info.map((_, i) => i).filter(i => info[i].visible !== false)
 
   const at = (fmt, title) => {
     const i = info.findIndex(c => c.format === fmt)
@@ -256,6 +300,14 @@ function columns(st) {
   // with no addresses to put in columns there is no diagram to offer
   $('#mode').hidden = S.ix.src < 0 || S.ix.dst < 0
   if ($('#mode').hidden) S.view = 'list'
+
+  // the list folds Source/SrcPort/Destination/DstPort into one column - address:port
+  // → address:port - rather than four; 'addr' stands in for the pair in S.vis, and
+  // fillPair(), above, reads the four apart again by the same S.ix this leaves in place
+  const fold = new Set([S.ix.sport, S.ix.dst, S.ix.dport])
+  S.vis = $('#mode').hidden ? shown
+    : shown.filter(i => !fold.has(i)).map(i => i === S.ix.src ? 'addr' : i)
+  S.cols = S.vis.map(i => i === 'addr' ? ADDR : info[i].title)
 }
 
 const cell = (row, name) => (S.ix[name] >= 0 ? row.c[S.ix[name]] : '') || ''
@@ -269,21 +321,33 @@ function head() {
   canvas.style.minWidth = ''
   if (flowing()) return
   for (const title of S.cols) cols.appendChild(span(numCol(title), title))
+  const last = S.cols.length - 1
   $('#viewer').style.setProperty('--grid',
-    S.cols.map((c, i) => i === S.cols.length - 1 ? '1fr' : (WIDE[c] || 110) + 'px').join(' '))
+    S.cols.map((c, i) => i === last ? '1fr' : wide(c) + 'px').join(' '))
   // otherwise a narrow window shrinks the fixed columns' shared box below their
   // own total, and the overflow renders past #cols/canvas with no background to
   // paint it on - the header looks half-transparent and Info can hit 0 width
-  const fixed = S.cols.slice(0, -1).reduce((sum, c) => sum + (WIDE[c] || 110), 0)
-  const minWidth = fixed + INFO_MIN + 'px'
-  cols.style.minWidth = minWidth
-  canvas.style.minWidth = minWidth
+  const fixed = S.cols.slice(0, last).reduce((sum, c) => sum + wide(c), 0)
+  $('#viewer').style.setProperty('--minw', fixed + INFO_MIN + 'px')
+
+  // ...and the same pair again for the narrow layout, where Info has a line of
+  // its own and the columns before it have the first (see style.css). Its floor
+  // is theirs alone, and its tracks are theirs - one of which has to take the
+  // slack, or the line stops short of the row and so does Info under it, which
+  // spans the same tracks. The addresses are the column worth the width; a
+  // capture with none gets a spacer track instead.
+  const lead = S.cols.slice(0, last)
+  const give = lead.indexOf(ADDR)
+  const tracks = lead.map((c, i) => i === give ? `minmax(${wide(c)}px, 1fr)` : wide(c) + 'px')
+  if (give < 0) tracks.push('1fr')
+  $('#viewer').style.setProperty('--gridn', tracks.join(' '))
+  $('#viewer').style.setProperty('--minwn', fixed + 'px')
 }
 
 // The views share the pages, the filter and the selection, so switching is a
 // repaint - of rows built the other way, hence throwing the slots out.
 function view(pick) {
-  const top = Math.round(list.scrollTop / rowH())
+  const top = Math.round(list.scrollTop / ROW)
   S.view = pick
   const button = $('#mode')
   button.classList.toggle('flow', flowing())   // the icon draws whichever view is on
@@ -291,13 +355,14 @@ function view(pick) {
     ? 'Sequence diagram (click for the packet list)'
     : 'Packet list (click for the sequence diagram)'
   $('#viewer').classList.toggle('flow', flowing())
+  measure()                               // ...which is what rescopes --row
   for (const el of slots) el.remove()
   slots = []
   unlane()
   head()
   warnFlow()
   canvas.style.height = height() + 'px'   // as in reveal(): rows of another height
-  list.scrollTop = top * rowH()           // scroll to the same frame, not the same px
+  list.scrollTop = top * ROW              // scroll to the same frame, not the same px
   sync(); paint()
   addresses()   // after the paint: the rows are worth more than the warning is
 }
@@ -1467,7 +1532,20 @@ function restore() {
 }
 
 list.addEventListener('scroll', paint, { passive: true })
-new ResizeObserver(paint).observe(list)
+// a window crossing the narrow breakpoint changes --row under the list, so the
+// rows want re-placing at the new height - and the scroll put back on the frame
+// it was on rather than on the pixel, as in view()
+new ResizeObserver(() => {
+  const top = Math.round(list.scrollTop / ROW)
+  if (measure()) {
+    canvas.style.height = height() + 'px'
+    list.scrollTop = top * ROW
+  }
+  // the collapse to a single row is a resize of its own, and this is the callback
+  // it arrives in - so the row it collapsed around is put back under the scrollport
+  if (pinned() && S.selIdx >= 0) list.scrollTop = S.selIdx * ROW
+  paint()
+}).observe(list)
 
 addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') {
@@ -1480,7 +1558,7 @@ addEventListener('keydown', e => {
     view(flowing() ? 'list' : 'flow')
     return
   }
-  const rows = Math.max(1, Math.floor(list.clientHeight / rowH()) - 1)
+  const rows = Math.max(1, Math.floor(list.clientHeight / ROW) - 1)
   const jump = { ArrowDown: 1, ArrowUp: -1, PageDown: rows, PageUp: -rows }[e.key]
   if (jump) { e.preventDefault(); move(jump) }
   else if (e.key === 'Home') { e.preventDefault(); reveal(0); select(0) }
