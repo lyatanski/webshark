@@ -1,21 +1,33 @@
 # sharkd's global preferences, read from the data directory of the Wireshark
 # installed next to it - so every program in this image starts with these columns.
 #
-# The only reason the file exists: Source and Destination carry addresses but not
-# ports, and both the packet list and the sequence-diagram view want them, as
-# Wireshark's own flow graph labels each arrow end with its port. sharkd will not
-# add a column on request - `frames` takes no column list, and `setconf
-# gui.column.format` after startup renames the columns without changing what they
-# hold - so the ports have to be columns from the very start.
+# The only reason the file exists: the columns. sharkd will not add one on request
+# - `frames` takes no column list, and `setconf gui.column.format` after startup
+# renames the columns without changing what they hold - so every column the UI can
+# ever want has to be a column from the very start. Two things want one:
 #
-# SrcPort/DstPort sit right after Source/Destination so the packet list shows
-# address and port together; the flow view reads the same columns out of the rows
-# it already has. Everything else below is Wireshark's default column set,
-# unchanged.
+# - Source and Destination carry addresses but not ports, and both the packet list
+#   and the sequence-diagram view want them, as Wireshark's own flow graph labels
+#   each arrow end with its port. SrcPort/DstPort sit right after Source/Destination
+#   so the packet list shows address and port together; the flow view reads the same
+#   columns out of the rows it already has.
+#
+# - The settings drawer offers the Time column in three shapes, and a shape is a
+#   column format - so all three are here, and the drawer picks which one the list
+#   draws in the Time slot. Delta and UTC are marked hidden below: sharkd still
+#   sends their values with every row, and reports them as `visible: false`, which
+#   is what keeps them out of the list until they are asked for.
+#
+# Everything else below is Wireshark's default column set, unchanged.
+
+# the two alternative Time columns, by format string - see the note above
+gui.column.hidden: %Gt,%Yut
 
 gui.column.format:
 	"No.", "%m",
 	"Time", "%t",
+	"Delta", "%Gt",
+	"UTC", "%Yut",
 	"Source", "%s",
 	"SrcPort", "%uS",
 	"Destination", "%d",
