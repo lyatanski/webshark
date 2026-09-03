@@ -1,0 +1,16 @@
+# The Android project is part of the build context now - see Dockerfile.android -
+# and none of what a local Gradle or Docker run leaves in it belongs in an image.
+.git
+android/.gradle
+android/build
+android/app/build
+android/local.properties
+
+# Written into the project by the `tree` target, and handed to `apk` from that
+# target rather than from the context - a stale 140 MB libsharkd.so has no
+# business being uploaded with the build.
+android/app/src/main/jniLibs
+android/app/src/main/assets
+
+# The APK the apk target writes - 41 MB with no reason to be uploaded back.
+out

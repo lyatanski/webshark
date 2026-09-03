@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.WindowManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -50,6 +51,19 @@ class MainActivity : Activity() {
 
         startForegroundService(Intent(this, ServerService::class.java))
 
+        // A notch or hole-punch is a physically opaque part of the screen -
+        // hiding the bars doesn't reclaim it, and content drawn there is just
+        // unusable. The system only lets a window's content extend under it at
+        // all if asked; ALWAYS is R+, SHORT_EDGES is the 28-29 equivalent (it
+        // only covers portrait, but every cutout device this old is a portrait
+        // notch anyway).
+        window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            else
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
             // app.js keeps the chosen theme in localStorage, and index.html reads
@@ -76,6 +90,23 @@ class MainActivity : Activity() {
                     loaded = true
                     pending?.let { pending = null; show(it) }
                 }
+            }
+
+            // The page has no way to ask for this - it's native geometry, not
+            // something env(safe-area-inset-*) sees inside a WebView - so it's
+            // met with padding here instead, on the WebView itself, rather than
+            // any change to src/web: the page renders exactly as it always has,
+            // just inset from whatever the cutout takes out of the screen.
+            setOnApplyWindowInsetsListener { view, insets ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val cutout = insets.getInsets(WindowInsets.Type.displayCutout())
+                    view.setPadding(cutout.left, cutout.top, cutout.right, cutout.bottom)
+                } else {
+                    val cutout = insets.displayCutout
+                    view.setPadding(cutout?.safeInsetLeft ?: 0, cutout?.safeInsetTop ?: 0,
+                        cutout?.safeInsetRight ?: 0, cutout?.safeInsetBottom ?: 0)
+                }
+                insets
             }
         }
         setContentView(web)

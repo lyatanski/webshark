@@ -23,15 +23,33 @@ const OVER = 8     // rows drawn above and below the viewport
 // which is Info, and wants everything it can get
 const ADDR = 'Source → Destination'   // the folded pair's own title - see columns()
 const WIDE = {
-  'No.': 76, Time: 112, Delta: 96, Source: 150, SrcPort: 70,
+  'No.': 76, Time: 112, Delta: 96, UTC: 208, Source: 150, SrcPort: 70,
   Destination: 150, DstPort: 70, Protocol: 76, Length: 64,
   [ADDR]: 320,
 }
 const wide = c => WIDE[c] || 110
 const INFO_MIN = 160  // below this the 1fr column would hit 0 and vanish
+
+// The Time column in the three shapes the settings drawer offers. A shape is a
+// column format, and sharkd can neither add a column nor reformat one after
+// startup - so all three are columns of its own from the very start (see the
+// preferences file), two of them hidden, and the pick is only which of them the
+// Time slot draws. `col` is the title sharkd gives that column, which is what
+// WIDE above and columns() below both key off.
+const TIMES = [
+  { key: 'rel', fmt: '%t', col: 'Time',
+    what: 'Since the capture began', eg: '9.712970' },
+  { key: 'delta', fmt: '%Gt', col: 'Delta',
+    what: 'Since the previous displayed frame', eg: '0.000840' },
+  { key: 'utc', fmt: '%Yut', col: 'UTC',
+    what: 'Absolute, in UTC', eg: '2026-07-24 15:00:48.910089Z' },
+]
+let TIME = TIMES.find(t => t.key === localStorage.getItem('time')) || TIMES[0]
+
 // the flow view's gutter is the list's own No. and Time columns, so a frame's
-// number and time sit in the same place whichever view draws it
-const GUT = WIDE['No.'] + WIDE.Time
+// number and time sit in the same place whichever view draws it - and it moves
+// with the Time column the drawer picked, the list's own having moved
+let GUT = 0
 const LANE = [160, 400]  // node column: spread to fill the window, between these
 const NODES = 40   // as many addresses as Wireshark's own flow graph draws
 
@@ -46,6 +64,7 @@ async function api(path, params, init) {
 
 const S = {
   file: null, filter: '', cols: [], total: 0,
+  st: null,          // the capture's `status`, kept for columns() to be re-read from
   vis: [],           // row.c indexes the list draws, in order
   ix: {},            // ...and the ones the flow view needs, by name
   view: 'list',
@@ -93,8 +112,12 @@ const pinned = () => NARROW && $('#viewer').classList.contains('picked')
 
 // the list lays its columns out in a grid, the flow view as spans over its gutter;
 // these carry the two the views share so .num/.ft can size off the same numbers
-$('#viewer').style.setProperty('--numw', WIDE['No.'] + 'px')
-$('#viewer').style.setProperty('--timew', WIDE.Time + 'px')
+function gutter() {
+  GUT = WIDE['No.'] + wide(TIME.col)
+  $('#viewer').style.setProperty('--numw', WIDE['No.'] + 'px')
+  $('#viewer').style.setProperty('--timew', wide(TIME.col) + 'px')
+}
+gutter()
 measure()   // the window may already be narrow, and a paint can come before a resize
 
 // No. reads as numeric data, so both views set it off from the left-aligned
@@ -280,20 +303,31 @@ function move(delta) {
 
 // A row is every column sharkd sent, hidden ones included, so the flow view finds
 // the addresses and the ports by column *format* rather than by position - and a
-// sharkd configured differently, or not at all, still lines up. The ports are the
-// two hidden columns the image adds (images/webshark/preferences); without them
-// the diagram simply has no ports to label its arrows with.
+// sharkd configured differently, or not at all, still lines up. Four of the columns
+// are this image's own (see the preferences file): the two ports, without which the
+// diagram has none to label its arrows with, and the Time column's two alternatives
+// - see TIMES - which are hidden ones, sent with every row and reported as
+// `visible: false`, so they stay out of the list until the drawer asks for one.
+//
+// Called again, off the status kept here, whenever the drawer picks another of
+// those: which columns a row holds is the capture's, which of them the list draws
+// is the setting's.
 function columns(st) {
   const info = st.column_info ||
     (st.columns || []).map(title => ({ title, format: '', visible: true }))
+  S.st = st
   const shown = info.map((_, i) => i).filter(i => info[i].visible !== false)
 
   const at = (fmt, title) => {
     const i = info.findIndex(c => c.format === fmt)
     return i >= 0 ? i : info.findIndex(c => c.title === title)
   }
+  // the Time column the drawer asked for, or - from a sharkd whose columns are not
+  // this image's - the one Wireshark has by default
+  const rel = at('%t', 'Time'), picked = at(TIME.fmt, TIME.col)
   S.ix = {
-    time: at('%t', 'Time'), src: at('%s', 'Source'), dst: at('%d', 'Destination'),
+    time: picked >= 0 ? picked : rel,
+    src: at('%s', 'Source'), dst: at('%d', 'Destination'),
     sport: at('%uS', 'SrcPort'), dport: at('%uD', 'DstPort'),
     proto: at('%p', 'Protocol'), info: at('%i', 'Info'),
   }
@@ -305,8 +339,12 @@ function columns(st) {
   // → address:port - rather than four; 'addr' stands in for the pair in S.vis, and
   // fillPair(), above, reads the four apart again by the same S.ix this leaves in place
   const fold = new Set([S.ix.sport, S.ix.dst, S.ix.dport])
-  S.vis = $('#mode').hidden ? shown
+  // ...and the Time slot is one column of three, whichever of them was picked: the
+  // alternatives are the drawer's to place, never the list's to draw beside it
+  const alts = new Set(TIMES.map(t => at(t.fmt, t.col)).filter(i => i >= 0 && i !== rel))
+  const drawn = $('#mode').hidden ? shown
     : shown.filter(i => !fold.has(i)).map(i => i === S.ix.src ? 'addr' : i)
+  S.vis = drawn.filter(i => !alts.has(i)).map(i => i === rel ? S.ix.time : i)
   S.cols = S.vis.map(i => i === 'addr' ? ADDR : info[i].title)
 }
 
@@ -467,7 +505,7 @@ function layout() {
   const cols = $('#cols')
   cols.style.minWidth = S.width + 'px'
   cols.textContent = ''
-  cols.append(span('num', 'No.'), span('ft', 'Time'))
+  cols.append(span('num', 'No.'), span('ft', TIME.col))
   S.nodes.forEach((addr, i) => {
     const held = drag && drag.addr === addr   // the column being dragged right now
     const label = span('fnode' + (held ? ' grab' : ''))
@@ -862,7 +900,10 @@ $('#tree').addEventListener('dblclick', e => {
   const el = e.target.closest('.n')
   if (el) toggle(el)
 })
-$('footer').addEventListener('click', () => {
+$('footer').addEventListener('click', e => {
+  // on the capture list the bar is the drop hint, so clicking it offers the
+  // same thing a drop does; in the viewer it is the picked field's filter
+  if (!$('#files').hidden) { if (e.target !== $('#pick')) $('#pick').click(); return }
   if ($('#field')._filter) filter($('#field')._filter)
 })
 
@@ -1067,6 +1108,7 @@ const human = n => n < 1024 ? n + ' B'
 
 async function files() {
   S.file = null
+  S.st = null
   $('#viewer').hidden = true
   $('#files').hidden = false
   for (const sel of ['#back', '#mode']) $(sel).hidden = true
@@ -1462,6 +1504,13 @@ async function upload(chosen) {
   files()
 }
 
+// the footer's hidden input - the same upload, chosen rather than dropped
+$('#pick').addEventListener('change', e => {
+  const chosen = [...e.target.files]   // taken before the reset empties the input
+  e.target.value = ''                  // so choosing the same file twice still fires
+  if (chosen.length) upload(chosen)
+})
+
 document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('drop') })
 document.addEventListener('dragleave', () => document.body.classList.remove('drop'))
 document.addEventListener('drop', e => {
@@ -1470,26 +1519,75 @@ document.addEventListener('drop', e => {
   if (e.dataTransfer.files.length) upload(e.dataTransfer.files)
 })
 
-// -------------------------------------------------------------------- theme ---
+// ----------------------------------------------------------------- settings ---
+
+// The drawer under the cog: what the UI remembers about how it looks, which is
+// nothing the server or the capture has an opinion about. Both settings are a
+// list of radios built the same way, and both are kept in localStorage - the
+// theme by index.html too, which reads it before the first paint.
 
 // No setting means follow the system, which is what the CSS does on its own; the
 // other two states stamp data-theme and are remembered.
-const THEMES = ['system', 'light', 'dark']
-const MARK = { system: '◉', light: '☀', dark: '☾' }
+const THEMES = [
+  { key: 'system', what: 'Follow the system' },
+  { key: 'light', what: 'Light' },
+  { key: 'dark', what: 'Dark' },
+]
 
 function theme(pick) {
   if (pick === 'system') { delete document.documentElement.dataset.theme; localStorage.removeItem('theme') }
   else { document.documentElement.dataset.theme = pick; localStorage.setItem('theme', pick) }
-  const button = $('#theme')
-  button.textContent = MARK[pick]
-  button.title = 'Theme: ' + pick + ' (click to change)'
 }
 
-$('#theme').onclick = () => {
-  const now = localStorage.getItem('theme') || 'system'
-  theme(THEMES[(THEMES.indexOf(now) + 1) % THEMES.length])
+// The Time column's shape is a column sharkd already sent - see TIMES - so this
+// is no fetch and no reload: the rows on hand carry all three, and this is which
+// of them the list draws and the flow view puts in its gutter.
+function retime(pick) {
+  TIME = pick
+  localStorage.setItem('time', pick.key)
+  gutter()
+  if (!S.st) return
+  columns(S.st)   // ...the same columns, read with the new Time slot in them
+  unlane()        // the diagram's header and lifelines were laid out for the old gutter
+  head()          // the list's title, and the width that one wants
+  paint()         // list: cells refill from the swapped column; flow: layout() re-lanes
 }
-theme(localStorage.getItem('theme') || 'system')
+
+// One group of the drawer: a radio each, the option's own line, and under it the
+// sample the time formats want and the themes have no use for. A pick leaves the
+// drawer open - the page it changes is behind it, not under it, so the next pick
+// is a click away rather than a click and a reopen.
+function options(group, list, on, pick) {
+  const box = $('#settings .opts[data-group=' + group + ']')
+  for (const opt of list) {
+    const label = document.createElement('label')
+    const radio = document.createElement('input')
+    radio.type = 'radio'
+    radio.name = group
+    radio.checked = opt.key === on.key
+    radio.onchange = () => pick(opt)
+    label.append(radio, span('what', opt.what))
+    if (opt.eg) label.append(span('eg', opt.eg))
+    box.append(label)
+  }
+}
+
+function drawer(open) {
+  $('#settings').classList.toggle('on', open)
+  $('#gear').setAttribute('aria-expanded', open)
+}
+
+$('#gear').onclick = () => drawer(!$('#settings').classList.contains('on'))
+// a click anywhere else closes it: the drawer is a menu over the page, not part
+// of the header it hangs from
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest('#settings, #gear')) drawer(false)
+})
+
+const themed = THEMES.find(t => t.key === localStorage.getItem('theme')) || THEMES[0]
+options('theme', THEMES, themed, opt => theme(opt.key))
+options('time', TIMES, TIME, retime)
+theme(themed.key)
 
 // -------------------------------------------------------------------- plumb ---
 
@@ -1548,6 +1646,11 @@ new ResizeObserver(() => {
 }).observe(list)
 
 addEventListener('keydown', e => {
+  // the drawer first: a radio in it is an INPUT, and the filter box's own Escape
+  // below would clear the filter behind an open drawer rather than close it
+  if (e.key === 'Escape' && $('#settings').classList.contains('on')) {
+    drawer(false); $('#gear').focus(); return
+  }
   if (e.target.tagName === 'INPUT') {
     if (e.key === 'Escape') { e.target.blur(); S.file ? filter('') : find('') }
     return

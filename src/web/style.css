@@ -53,6 +53,12 @@
 /* the UA rule for this is [hidden]{display:none}, which every `display` set on
    an id below would outrank - and then `hidden` quietly stops hiding anything */
 [hidden] { display: none !important; }
+/* A touch screen has no pointer to hover with, but a tap leaves :hover stuck on
+   whatever it landed on until something else is tapped - a row highlighted long
+   after the selection moved on, a view switch frozen mid-morph. Every :hover in
+   this file is feedback about where the pointer is and nothing more, so all of
+   them sit behind `@media (hover: hover)`; what a tap actually changes is a
+   class, and that is what draws the state. */
 html, body { height: 100%; margin: 0; }
 body {
   display: flex; flex-direction: column;
@@ -65,6 +71,7 @@ body {
 header {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--head);
+  position: relative;   /* what the settings drawer hangs off - see the end of this section */
 }
 #brand { display: flex; align-items: center; }
 #brand svg { width: 18px; height: 18px; fill: var(--fg); }
@@ -92,19 +99,23 @@ header {
   display: flex; gap: 8px; padding: 3px 6px; border-radius: 2px;
   font: 12px var(--mono); cursor: pointer; white-space: nowrap;
 }
-#complete li.sel, #complete li:hover { background: var(--sel); color: var(--selfg); }
+#complete li.sel { background: var(--sel); color: var(--selfg); }
 #complete li > span:last-child {
   color: var(--dim); overflow: hidden; text-overflow: ellipsis; font-style: italic;
 }
-#complete li.sel > span:last-child, #complete li:hover > span:last-child { color: inherit; }
-/* pushes count+mode+theme to the right edge */
+#complete li.sel > span:last-child { color: inherit; }
+@media (hover: hover) {
+  #complete li:hover { background: var(--sel); color: var(--selfg); }
+  #complete li:hover > span:last-child { color: inherit; }
+}
+/* pushes count+mode+gear to the right edge */
 #count { color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; margin-left: auto; }
 button {
   padding: 3px 8px; font: inherit; color: var(--fg); cursor: pointer;
   background: var(--bg); border: 1px solid var(--line); border-radius: 3px;
   text-decoration: none;
 }
-button:hover { border-color: var(--sel); }
+@media (hover: hover) { button:hover { border-color: var(--sel); } }
 
 /* The view switch draws the view it is showing and morphs into the other one on
    hover, so the hover is a preview of the click. Each list row is one item -
@@ -122,12 +133,49 @@ button:hover { border-color: var(--sel); }
 #mode.flow .msg { opacity: 1; }
 /* ...and the hover shows the state the button is not in. Same specificity as the
    .flow pair above, so these have to come after it. */
-#mode:hover .item { transform: translate(var(--fx), var(--fy)) rotate(90deg); }
-#mode:hover .msg { opacity: 1; }
-#mode.flow:hover .item { transform: translate(var(--lx), var(--ly)) rotate(0deg); }
-#mode.flow:hover .msg { opacity: 0; }
+@media (hover: hover) {
+  #mode:hover .item { transform: translate(var(--fx), var(--fy)) rotate(90deg); }
+  #mode:hover .msg { opacity: 1; }
+  #mode.flow:hover .item { transform: translate(var(--lx), var(--ly)) rotate(0deg); }
+  #mode.flow:hover .msg { opacity: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
   #mode .item, #mode .msg { transition: none; }
+}
+
+/* The settings drawer, and the cog it comes out of: what the UI remembers about
+   how it looks, which is nothing the server or the capture has an opinion about.
+   The cog turns a tooth on hover and stays turned while the drawer is open, so
+   the button reads as the thing the drawer was pulled out of. */
+#gear { display: flex; padding: 3px 6px; }
+#gear svg { width: 18px; height: 18px; transition: transform .4s cubic-bezier(.4,0,.2,1); }
+#gear[aria-expanded=true] svg { transform: rotate(45deg); }
+@media (hover: hover) { #gear:hover svg { transform: rotate(45deg); } }
+/* Absolute against the header, so it hangs over the page instead of pushing it
+   about, and out of sight by transform rather than by `hidden` - which has no
+   state to slide back from. Everything in it is built by app.js: see options(). */
+#settings {
+  position: absolute; top: 100%; right: 8px; z-index: 5;
+  margin-top: 2px; padding: 2px 12px 8px; min-width: 260px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 3px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / .2);
+  visibility: hidden; opacity: 0; transform: translateX(10px);
+  transition: opacity .15s, transform .15s, visibility .15s;
+}
+#settings.on { visibility: visible; opacity: 1; transform: none; }
+#settings h2 { margin: 6px 0 3px; font: 600 12px var(--mono); color: var(--dim); }
+#settings section + section { margin-top: 6px; border-top: 1px solid var(--line); }
+/* the radio beside the option, and the sample - where there is one - on its own
+   line under it, in the column the option's own text starts in */
+#settings label {
+  display: grid; grid-template-columns: auto 1fr; gap: 0 6px; align-items: center;
+  padding: 2px 0; cursor: pointer;
+}
+@media (hover: hover) { #settings label:hover { color: var(--sel); } }
+#settings input { margin: 0; accent-color: var(--sel); }
+#settings .eg { grid-column: 2; color: var(--dim); }
+@media (prefers-reduced-motion: reduce) {
+  #gear svg, #settings { transition: none; }
 }
 
 /* ------------------------------------------------------------- capture list */
@@ -169,7 +217,7 @@ button:hover { border-color: var(--sel); }
   padding: 0 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 .caprow { position: absolute; left: 0; right: 0; cursor: default; }
-.caprow:hover { background: var(--head); }
+@media (hover: hover) { .caprow:hover { background: var(--head); } }
 .caprow .n { font-family: var(--mono); }
 .caprow .s, .caprow .t, .caprow .a { color: var(--dim); }
 /* a title is over its own column's text, so the two right-aligned columns'
@@ -219,7 +267,7 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 }
 #canvas { position: relative; }
 .row { position: absolute; left: 0; right: 0; font: 12px var(--mono); cursor: default; }
-.row:hover { background: var(--head); }
+@media (hover: hover) { .row:hover { background: var(--head); } }
 .row.sel, .row.sel:hover { background: var(--sel); color: var(--selfg); }
 .row.sel .port { color: inherit; }   /* dimmed port, but not against the sel background */
 .row.gap { color: var(--dim); }                      /* page still in flight */
@@ -315,10 +363,15 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 .fnode > .fname { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .fnode > .fx {
   padding: 0; border: 0; background: none; font: inherit; line-height: 1;
-  color: var(--dim); opacity: 0; cursor: pointer;
+  color: var(--dim); cursor: pointer;
 }
-.fnode:hover > .fx, .fnode > .fx:focus-visible { opacity: 1; }
-.fnode > .fx:hover { color: #d33; }
+/* Where there is a pointer, the × keeps out of the way until the label is under
+   it; where there is none it has no way of being asked for, so it stays out. */
+@media (hover: hover) {
+  .fnode > .fx { opacity: 0; }
+  .fnode:hover > .fx, .fnode > .fx:focus-visible { opacity: 1; }
+  .fnode > .fx:hover { color: #d33; }
+}
 /* the column being dragged, and its lifeline under the pointer */
 .fnode.grab { background: var(--sel); color: var(--selfg); border-radius: 2px; }
 .fnode.grab > .fx { color: inherit; }
@@ -334,7 +387,7 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
   height: var(--row); overflow: hidden;           /* a label may outgrow its arrow */
   font: 12px var(--mono); cursor: default;
 }
-.frow:hover { background: var(--head); }
+@media (hover: hover) { .frow:hover { background: var(--head); } }
 .frow.sel, .frow.sel:hover { background: var(--sel); color: var(--selfg); }
 /* the gutter is the packet list's No. and Time columns over again - same widths,
    same padding, so switching views leaves both where they were. --numw/--timew
@@ -420,8 +473,10 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
   background: oklch(from var(--rbg) var(--huel) var(--huec) h);
   color: color-mix(in srgb, var(--rfg) var(--hueink), var(--fg));
 }
-.row.hue:hover, .frow.hue:hover {
-  background: oklch(from var(--rbg) var(--huelh) var(--huec) h);
+@media (hover: hover) {
+  .row.hue:hover, .frow.hue:hover {
+    background: oklch(from var(--rbg) var(--huelh) var(--huec) h);
+  }
 }
 
 /* ------------------------------------------------------ detail and bytes */
@@ -446,7 +501,7 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 
 .n { white-space: nowrap; font: 12px var(--mono); }
 .n > .l { padding: 1px 4px 1px 0; cursor: default; display: block; }
-.n > .l:hover { background: var(--head); }
+@media (hover: hover) { .n > .l:hover { background: var(--head); } }
 .n.sel > .l { background: var(--sel); color: var(--selfg); }
 .n .t { display: inline-block; width: 16px; font-size: 15px; color: var(--dim); cursor: pointer; }
 .n .g { font-style: italic; }                        /* generated by a dissector */
@@ -468,8 +523,10 @@ footer {
   color: var(--dim); font: 12px var(--mono);
   white-space: nowrap; overflow: hidden;
 }
-/* the click is on the whole bar (easier to hit), but only worth having a
-   pointer for while there is a field's filter to apply */
+/* the click is on the whole bar (easier to hit): it opens the file picker on
+   the capture list, and applies the field's filter in the viewer - no pointer
+   when it is the viewer with no filter to apply, where it does nothing */
+#files:not([hidden]) ~ footer,
 footer:has(#field:not(:empty)) { cursor: pointer; }
 /* an empty #msg/#field would still claim its 12px of gap, nudging whatever
    comes after it (#empty, #drophint) to the right for no reason */
