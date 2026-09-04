@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A WebView takes the prefers-color-scheme its page sees from the app
+         theme's isLightTheme attribute and never from the device's night
+         setting - so under a theme that is dark whatever the device is doing,
+         which @android:style/Theme.Material is, style.css's default scheme and
+         the drawer's "Follow the system" have no system to follow: the page is
+         dark on a phone in light mode, and only the drawer can get it back.
+         One name over the two platform themes is what puts that back - the
+         light one here, the dark one in values-night - and the activity picks up
+         whichever the device is set to when it is created. (Only then: uiMode is
+         one of its configChanges, see the manifest, so a night switch while the
+         app is open is not a restart and may not reach the page. The band round
+         the cutout follows the page itself, so it cannot disagree either way.)
+
+         Nothing else is styled, there being nothing native on screen to style -
+         the UI is a WebView, and a Toast and the file chooser are all that ever
+         appears over it - except the window itself, which is the page's header
+         colour so that a cold start is not a flash of white before the page.
+
+         And the system bars, which are on screen (the app is edge-to-edge, not
+         fullscreen) but transparent, so that what shows through them is the
+         page's own colour - see paint() in MainActivity, which draws that band
+         and asks for icons legible against it. Transparent is the app's to ask
+         for only up to API 34: from 35 a window that targets it is edge-to-edge
+         whatever it says and these two colours are ignored, the bars being
+         transparent there by default. windowLightStatusBar is the same request
+         paint() makes, for the moment before it can be made in code: it is what
+         the band a cold start puts up needs, and is the one item of these that
+         differs between the pair. -->
+    <style name="Theme.Webshark" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/band</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- ...and neither is scrimmed on the app's behalf, the band being a
+             colour the bars' icons are already picked to be legible on. -->
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <!-- dark icons, on the light scheme's head colour -->
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

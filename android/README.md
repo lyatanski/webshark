@@ -94,9 +94,11 @@ otherwise find under `/usr` named in its environment:
 | `WIRESHARK_PLUGIN_DIR` | where `ims.lua` was unpacked |
 | `WIRESHARK_CONFIG_DIR`, `HOME` | a writable configuration directory, there being no passwd entry to derive one from |
 
-`ServerService.kt` is a foreground service holding that process, so backgrounding
-the app does not unload the capture. `MainActivity.kt` is the WebView, and waits
-for the port to answer before loading rather than for a fixed time.
+`ServerService.kt` is a service holding that process, so a short trip out of the
+app does not unload the capture - a plain service and not a foreground one, the
+notification a foreground service costs being worth more than surviving out of
+sight indefinitely. `MainActivity.kt` is the WebView, and waits for the port to
+answer before loading rather than for a fixed time.
 
 `SHARKD_SESSIONS` is 1 and `SCAN_FRAMES` is 2000, against the 4 and 20000 the
 container uses. sharkd holds a whole dissected capture in memory and the

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The head colour of style.css's dark scheme; see band in values/. -->
+    <color name="band">#1E2126</color>
+</resources>

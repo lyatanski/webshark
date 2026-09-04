@@ -16,6 +16,12 @@
   --headrow: 24px;                 /* header bar height, shared by #filehead and #cols
                                        (list and flow mode alike) - kept off --row so
                                        each view's own row density doesn't move it */
+  --nav: 0px;                     /* what a navigation bar covers of the bottom edge,
+                                     which is 0 in a browser: only the Android shell
+                                     has a window that runs under one, and it sets this
+                                     on <html> - see foot() in MainActivity.kt. The
+                                     footer is the whole of what reads it, that being
+                                     the only thing the page puts at that edge */
   --bg: #fff;
   --fg: #1a1a1a;
   --dim: #6a6a6a;
@@ -205,7 +211,7 @@ button {
    box a cell ends up with and puts it down the middle either way, so a column
    can set its own font without coming off the row's line. */
 #filehead, .caprow {
-  display: grid; grid-template-columns: 26% 6em 14em 1fr 6em; align-items: center;
+  display: grid; grid-template-columns: 26% 6em 14em 1fr 7em; align-items: center;
 }
 .caprow { height: var(--row); line-height: var(--row); }
 #filehead {
@@ -216,7 +222,8 @@ button {
 #filehead > span, .caprow > span {
   padding: 0 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
-.caprow { position: absolute; left: 0; right: 0; cursor: default; }
+/* the whole row opens the capture - see the click handler in app.js */
+.caprow { position: absolute; left: 0; right: 0; cursor: pointer; }
 @media (hover: hover) { .caprow:hover { background: var(--head); } }
 .caprow .n { font-family: var(--mono); }
 .caprow .s, .caprow .t, .caprow .a { color: var(--dim); }
@@ -233,6 +240,33 @@ button {
 /* a row the filter cannot judge yet: its protocols are still being read, so it
    is on the list on the chance that they match */
 .caprow.tent { opacity: .55; }
+
+/* A phone, where the five fixed columns above come to half again the width of
+   the screen - the protocols squeezed to nothing and the download link off the
+   side of it. So the row folds in two at the same width the packet list's does,
+   and for the same reason: the name on its own line, and what the columns had
+   to say about the capture on the line under it. The row is also a tap target
+   now rather than the name alone, which is what the doubled height is for. */
+@media (max-width: 1100px) {
+  #files { --row: 52px; }        /* two of the wide list's rows, as #viewer's is */
+  /* nothing left to head: a size, a date and a list of protocol names each say
+     what they are, and one header line cannot label two rows of cells anyway */
+  #filehead { display: none; }
+  .caprow {
+    /* the two dimmed columns to their own content, the protocols to the rest,
+       and the link to the width it has above - minmax(0,1fr) rather than 1fr so
+       a long protocol list takes the leftovers instead of setting them */
+    grid-template-columns: auto auto minmax(0, 1fr) 7em;
+    grid-template-rows: repeat(2, calc(var(--row) / 2));
+    line-height: calc(var(--row) / 2);
+  }
+  .caprow .n { grid-area: 1 / 1 / 2 / 4; }
+  .caprow .s { grid-area: 2 / 1 / 3 / 2; text-align: left; }
+  .caprow .t { grid-area: 2 / 2 / 3 / 3; }
+  .caprow .p { grid-area: 2 / 3 / 3 / 4; }
+  .caprow .a { grid-area: 1 / 4 / 3 / 5; }   /* the link, against both lines */
+}
+
 body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 
 /* ------------------------------------------------------------- packet list */
@@ -519,7 +553,11 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 
 footer {
   display: flex; gap: 12px;
-  padding: 3px 8px; border-top: 1px solid var(--line); background: var(--head);
+  /* the bar's own padding, and under it the strip a navigation bar covers: the
+     footer paints through it - so the bar sits on the footer's colour rather
+     than on anything drawn for it - and keeps its contents, which are read and
+     tapped, above it */
+  padding: 3px 8px calc(3px + var(--nav)); border-top: 1px solid var(--line); background: var(--head);
   color: var(--dim); font: 12px var(--mono);
   white-space: nowrap; overflow: hidden;
 }

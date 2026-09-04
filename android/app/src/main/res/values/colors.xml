@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#F0F4F5</color>
+    <!-- The strip the status bar, the navigation bar and a display cutout cost
+         (see MainActivity), and the window a cold start shows before the page is
+         in it: style.css's head colour, so the band the clock and the back
+         gesture sit in reads as the page's own header bar and footer rather than
+         as a letterbox. The dark one is in values-night.
+         Only the guess, though, and only until the page is up: the theme is the
+         settings drawer's to pin, and what the drawer picked is a thing no
+         resource out here can see - so the page says what colour it really is
+         and MainActivity paints the band that. -->
+    <color name="band">#F2F3F5</color>
 </resources>
