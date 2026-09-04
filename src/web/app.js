@@ -16,7 +16,9 @@
 // rescopes and the narrow layout doubles - so it is measured off the element
 // rather than kept here as a second copy of a number that now moves on its own.
 let ROW = 20       // ...until measure() reads the real one, which it does before any paint
-const CROW = 26    // the capture list's own row, matching --row as #files rescopes it
+// the capture list's own row: --row as #files rescopes it, doubled again by the
+// narrow layout, so it is read back off the element as the packet list's is
+let CROW = 26
 const PAGE = 200   // frames per /api/frames call
 const OVER = 8     // rows drawn above and below the viewport
 // fixed widths for the columns Wireshark keeps narrow, the rest to the last one -
@@ -1000,7 +1002,16 @@ function rewind() {
   addresses()   // the filter is the answer to the warning, so re-ask on every one
 }
 
-$('#filterbar').addEventListener('submit', e => { e.preventDefault(); if (S.file) filter($('#filter').value) })
+// Enter is where a filter ends on a phone: there is nowhere to click away to,
+// so the box hands the focus back on submit and the soft keyboard goes down
+// with it, uncovering the rows the filter just picked. A pointer that can hover
+// is a desktop, where the bar is expected to stay focused for the next edit.
+const noHover = matchMedia('(hover: none)')
+$('#filterbar').addEventListener('submit', e => {
+  e.preventDefault()
+  if (noHover.matches) $('#filter').blur()   // before the round-trip below, not after it
+  if (S.file) filter($('#filter').value)
+})
 $('#flowfilter').onclick = () => $('#filter').focus()
 
 // Wireshark's own filter bar checks as you type and offers field names for
@@ -1054,6 +1065,7 @@ async function complete(field) {
 }
 
 function closeComplete() {
+  clearTimeout(liveTimer)   // else the check still pending reopens what this closed
   compItems = []; compIdx = -1; compAsked = null
   $('#complete').hidden = true
 }
@@ -1180,6 +1192,7 @@ function fileSlot(i) {
 }
 
 function filesDraw() {
+  CROW = parseFloat(getComputedStyle($('#files')).getPropertyValue('--row')) || CROW
   filecanvas.style.height = (S.filed.length * CROW) + 'px'
   const first = Math.max(0, Math.floor(filelist.scrollTop / CROW) - OVER)
   const upto = Math.min(S.filed.length, first + Math.ceil(filelist.clientHeight / CROW) + OVER * 2)
@@ -1232,11 +1245,15 @@ function filesPaint() {
   requestAnimationFrame(() => { fqueued = false; filesDraw() })
 }
 
-// One listener for the whole pool, since the rows themselves are recycled: a
-// click on the name opens it, one on the download link is left to the browser.
+// One listener for the whole pool, since the rows themselves are recycled: the
+// whole row opens the capture, and a click on the download link is left to the
+// browser. The row rather than the name it starts with, which is a line of text
+// tall - a target a mouse can hit and a finger cannot, the rest of the row
+// having looked just as clickable and done nothing.
 filecanvas.addEventListener('click', e => {
-  const link = e.target.closest('a.open')
-  if (link) openCapture(link.dataset.name)
+  if (e.target.closest('a.dl')) return
+  const row = e.target.closest('.caprow')
+  if (row) openCapture(row.querySelector('a.open').dataset.name)
 })
 filelist.addEventListener('scroll', filesPaint, { passive: true })
 new ResizeObserver(filesPaint).observe(filelist)
@@ -1485,20 +1502,49 @@ async function openCapture(file, want, num, as) {
   }
 }
 
-$('#back').onclick = () => {
+// Back to the list, which is also the end of the capture as far as the server is
+// concerned - sharkd holds one file at a time, and the next one to be opened is
+// not necessarily this one again.
+function closeCapture() {
   const file = S.file
   files()
   if (file) api('close', { f: file }, { method: 'POST' }).catch(() => {})
 }
 
+$('#back').onclick = closeCapture
+
+// One level back out of wherever the page is, and whether there was one to take:
+// the drawer, then the completion list, then the frame being dissected, then the
+// capture - the order they stack on screen in, innermost first. The header's own
+// button is the middle step of this and nothing else offers the rest, which on a
+// phone is the whole of the navigation: Android's back gesture asks for this and
+// leaves the app when it answers false (see onBackPressed in MainActivity.kt),
+// and Escape is the same thing on a keyboard - see the handler at the end.
+function pop() {
+  if ($('#settings').classList.contains('on')) { drawer(false); $('#gear').focus(); return true }
+  if (!$('#complete').hidden) { closeComplete(); return true }
+  if (S.selIdx >= 0) { deselect(); return true }
+  if (S.file) { closeCapture(); return true }
+  return false   // the capture list is the bottom of it: nothing left to close
+}
+
 async function upload(chosen) {
   for (const file of chosen) {
-    note('uploading ' + file.name + ' …')
+    // The name the server will file it under. It validates one itself - a bare
+    // name in its own alphabet, first character included (nameOK in
+    // src/main.go) - so a name it would not take is made into one it will,
+    // rather than sent on to be rejected: what a file picker hands over on a
+    // phone is called "capture (1).pcap" as often as not, and that is no reason
+    // to refuse the capture. The Android app does the same to one shared in
+    // rather than picked (nameOf in MainActivity.kt).
+    let name = file.name.replace(/[^A-Za-z0-9 ._+-]/g, '_').slice(0, 128)
+    if (!/^[A-Za-z0-9]/.test(name)) name = ('c' + name).slice(0, 128)
+    note('uploading ' + name + ' …')
     try {
-      const res = await fetch('/api/file?f=' + encodeURIComponent(file.name), { method: 'POST', body: file })
+      const res = await fetch('/api/file?f=' + encodeURIComponent(name), { method: 'POST', body: file })
       const body = await res.json()
       if (body.err) throw new Error(body.err)
-    } catch (err) { note(file.name + ': ' + err.message); return }
+    } catch (err) { note(name + ': ' + err.message); return }
   }
   note('')
   files()
@@ -1648,13 +1694,14 @@ new ResizeObserver(() => {
 addEventListener('keydown', e => {
   // the drawer first: a radio in it is an INPUT, and the filter box's own Escape
   // below would clear the filter behind an open drawer rather than close it
-  if (e.key === 'Escape' && $('#settings').classList.contains('on')) {
-    drawer(false); $('#gear').focus(); return
-  }
+  if (e.key === 'Escape' && $('#settings').classList.contains('on')) { pop(); return }
   if (e.target.tagName === 'INPUT') {
     if (e.key === 'Escape') { e.target.blur(); S.file ? filter('') : find('') }
     return
   }
+  // ...and with no box focused it is the way back out of the view itself, one
+  // level a press, which is what the back gesture does on Android - see pop()
+  if (e.key === 'Escape') { pop(); return }
   if (e.key === '/' || (e.key === 'f' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); $('#filter').focus(); return }
   if ($('#viewer').hidden) return
   if (e.key === 'v' && !e.ctrlKey && !e.metaKey && !$('#mode').hidden) {

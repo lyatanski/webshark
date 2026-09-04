@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The dark half of the pair; see Theme.Webshark in values/. -->
+    <style name="Theme.Webshark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/band</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- ...and neither is scrimmed on the app's behalf, the band being a
+             colour the bars' icons are already picked to be legible on. -->
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <!-- light icons, on the dark scheme's head colour -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>
