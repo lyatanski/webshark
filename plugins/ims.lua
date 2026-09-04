@@ -1,9 +1,5 @@
 --
--- Relate SIP to Diameter by the subscriber a message is about.
---
--- This is the example Lua expansion for the image (see the Dockerfile): a
--- postdissector that hangs six generated fields off every SIP and Diameter
--- frame, so a single display filter reaches across both protocols:
+-- Relate SIP, Diameter and RTP by the subscriber a message is about.
 --
 --     ims.id == "001010000000001"     one subscriber, Gm/Mw through Cx and Gx
 --     ims.impi == "001010000000001"   the same one, named by its IMPI
@@ -28,6 +24,11 @@
 -- becomes the key. `ims.id` is added once per distinct identity in the frame,
 -- and a display filter matches if any occurrence matches - which is what makes
 -- an INVITE come out under both the caller and the callee.
+--
+-- A number is keyed by its digits alone, so `tel:+359-000-000-001`, a spaced
+-- Subscription-Id-Data and a bare 359000000001 are one identity rather than
+-- three (`normalize`), and it is filterable either with the leading + or
+-- without it (`add_id`). What the tree displays is always the bare form.
 --
 -- ---------------------------------------------------------------------------
 --
@@ -77,10 +78,31 @@
 -- from the request and copied onto the answer, flagged as `ims.linked`. SIP
 -- needs no such thing - From and To are in every message including responses.
 --
+-- Media is the third kind of frame and needs no state of this plugin's own. An
+-- RTP packet carries no identity whatsoever - a payload type, a sequence number
+-- and an SSRC - and the one thing that ties a stream to a subscriber is the SDP
+-- that set it up. Wireshark has already resolved that half: the RTP dissector
+-- records which frame's SDP claimed this address and port, as a generated
+-- `rtp.setup-frame`, and that frame is a SIP frame this postdissector has read.
+-- So a media frame borrows the identities of its setup frame, flagged
+-- `ims.linked` like a Diameter answer and for the same reason - the frame
+-- itself said none of it - under `ims.ref == "Mb"`, the media transport of
+-- 23.002:
+--
+--     ims.id == "359000000001" && ims.ref == "Mb"   one subscriber's media
+--     ims.ref == "Mb"                              every stream in the capture
+--
+-- Both identities of the setup frame, as a rule, because both are on the wire
+-- between: the INVITE that offers the media names the caller in From and the
+-- callee in To. Borrowed and never binding, though - `unite` is not called for
+-- media, or the first talkspurt of every call would merge its two parties into
+-- one subscriber. A stream set up any other way, decoded as RTP by hand or
+-- found by the heuristic, has no setup frame and stays bare.
+--
 
 set_plugin_info({
-    version = '2.0',
-    description = 'Relates SIP and Diameter by the subscriber a message is about',
+    version = '2.1',
+    description = 'Relates SIP, Diameter and RTP by the subscriber a message is about',
 })
 
 local ims = Proto('ims', 'IMS correlation')
@@ -163,6 +185,14 @@ local SUBSCRIPTION = {
     [4] = 'impi',  -- END_USER_PRIVATE
 }
 
+-- The setup frame of a media stream: the frame whose SDP claimed the address
+-- and port this packet is on. RTCP is read the same way and off the same SDP,
+-- so the two are one list, each entry carrying the name its frames go out under.
+local media = {
+    { name = 'RTP',  setup = Field.new('rtp.setup-frame') },
+    { name = 'RTCP', setup = Field.new('rtcp.setup-frame') },
+}
+
 local ip = { src = Field.new('ip.src'), dst = Field.new('ip.dst') }
 
 local ROLES = { 'impi', 'impu' }
@@ -198,7 +228,8 @@ local CMD = {
 
 -- sip:001010000000001@ims.mnc01.mcc001.3gppnetwork.org;transport=udp
 -- "001010000000001@ims.mnc01.mcc001.3gppnetwork.org"
--- tel:+359000000001
+-- tel:+359-000-000-001
+-- 359 000 000 001
 --                                                  -> 001010000000001 / 359000000001
 local function normalize(raw)
     if raw == nil then return nil end
@@ -208,6 +239,20 @@ local function normalize(raw)
     s = s:gsub('^%a[%w%+%-%.]*:', '')  -- sip: sips: tel: im: pres:
     s = s:gsub('[;%?].*$', '')         -- uri parameters and headers
     s = s:gsub('@.*$', '')             -- @domain
+    -- A number is reduced to its digits. RFC 3966 s3 makes -, ., ( and ) visual
+    -- separators that carry no meaning, and a Diameter UTF8String holds whatever
+    -- the peer wrote into it - Subscription-Id-Data arrives spaced as readily as
+    -- it arrives bare - so one subscriber reaches this function as
+    -- +359-000-000-001, as 359 000 000 001 and as 359000000001, and all three
+    -- have to leave it as one key or the correlation splits three ways.
+    --
+    -- Only a value that is nothing but digits and separators is touched. The
+    -- same characters are ordinary in the user part of an IMPI or a SIP URI,
+    -- where `alice.smith` and `user-1` are names rather than numbers, and
+    -- pulling the punctuation out of those would key two subscribers alike.
+    if s:match('^%+?[%d%s%-%.%(%)]+$') then
+        s = s:gsub('[%s%-%.%(%)]', '')
+    end
     s = s:gsub('^%+', '')              -- E.164 international prefix
     s = s:lower()
     if s == '' then return nil end
@@ -525,6 +570,46 @@ local function sip_frame()
     return entry
 end
 
+-- Whoever the SDP that set this stream up was between. Nothing is read off the
+-- media itself, so a frame whose setup frame this session has not dissected yet
+-- comes out as what it is without who it is between, and says so in `partial`.
+local function media_frame()
+    for _, m in ipairs(media) do
+        local fi = m.setup()
+        if fi then
+            -- Mb of 23.002. Its access and core legs are not named apart the
+            -- way Gm and Mw are, so both come out as Mb.
+            local entry = { observed = new_set(), msgs = { m.name }, ref = 'Mb' }
+            local setup = cache[fi.value]
+            if setup then
+                for _, role in ipairs(ROLES) do
+                    for _, key in ipairs(setup.observed[role]) do
+                        add(entry.observed, key, role)
+                        entry.linked = true
+                    end
+                end
+            else
+                entry.partial = true
+            end
+            return entry
+        end
+    end
+    return nil
+end
+
+-- Every identity is keyed bare, so `ims.impu == "359000000001"` is the filter
+-- that works and the `+359000000001` copied straight out of a To header is the
+-- one that comes back empty. A number therefore goes in twice, the second item
+-- hidden: a hidden item is left out of the tree but still offered to the filter
+-- engine, so either form of the number finds the frame and only one of them is
+-- on display.
+local function add_id(st, field, id)
+    st:add(field, id)
+    if id:match('^%d+$') then
+        st:add(field, '+' .. id):set_hidden(true)
+    end
+end
+
 function ims.dissector(tvb, pinfo, tree)
     -- Only hits are cached, never misses. sharkd dissects the whole file once
     -- when it opens it, and on that pass none of the fields read below are
@@ -537,11 +622,17 @@ function ims.dissector(tvb, pinfo, tree)
     -- classes it reads keep growing: the SAA that ties an IMPI to an MSISDN
     -- comes hundreds of frames after the REGISTER, and caching the widened set
     -- would leave those early frames permanently short of it.
+    -- A media frame is the one entry that can be incomplete rather than absent,
+    -- because it is assembled out of another frame's: on a lone click the setup
+    -- frame may not have been dissected in this session at all, and caching the
+    -- stream without its subscribers would be the same permanent miss. A filter
+    -- pass dissects in frame order, so the SDP is read before the media it set
+    -- up and one pass is enough.
     local entry = cache[pinfo.number]
     if not entry then
-        entry = diameter_frame() or sip_frame()
+        entry = diameter_frame() or sip_frame() or media_frame()
         if not entry then return end
-        cache[pinfo.number] = entry
+        if not entry.partial then cache[pinfo.number] = entry end
     end
 
     local ids, related = relate(entry.observed)
@@ -553,9 +644,9 @@ function ims.dissector(tvb, pinfo, tree)
 
     if entry.ref then st:add(F.ref, entry.ref) end
     for _, msg in ipairs(entry.msgs) do st:add(F.msg, msg) end
-    for _, id in ipairs(ids.impi) do st:add(F.impi, id) end
-    for _, id in ipairs(ids.impu) do st:add(F.impu, id) end
-    for _, id in ipairs(ids.all) do st:add(F.id, id) end
+    for _, id in ipairs(ids.impi) do add_id(st, F.impi, id) end
+    for _, id in ipairs(ids.impu) do add_id(st, F.impu, id) end
+    for _, id in ipairs(ids.all) do add_id(st, F.id, id) end
     if entry.linked then st:add(F.linked, true) end
     if related then st:add(F.related, true) end
 end

@@ -15,9 +15,9 @@ browser, with no client to install.
   completion.
 - **Captures list** — sizes, capture times and a protocol summary per file;
   upload by drag-and-drop, download, close.
-- **IMS extras** — a Lua plugin relating SIP to Diameter by subscriber identity,
-  and a C plugin recovering ESP SAs from a capture's own AKA registration, so
-  protected Gm traffic dissects with nothing configured.
+- **IMS extras** — a Lua plugin relating SIP, Diameter and the RTP they set up
+  by subscriber identity, and a C plugin recovering ESP SAs from a capture's own
+  AKA registration, so protected Gm traffic dissects with nothing configured.
 
 ## Run
 
@@ -57,7 +57,7 @@ src/main.go      HTTP handlers and the JSON API (documented at the top of the fi
 src/sharkd.go    one sharkd per open capture, and the pool that ends them
 src/capture.go   capture times from the file header, cached protocol scans
 src/web/         the UI - no framework, no build step: app.js is what the browser runs
-plugins/ims.lua  SIP ↔ Diameter correlation
+plugins/ims.lua  SIP ↔ Diameter ↔ RTP correlation by subscriber identity
 plugins/ims_esp/ ESP SAs from a capture's own SIP registration, in C: a
                  postdissector that installs them as the file is read, so sharkd,
                  tshark and Wireshark alike need telling nothing
