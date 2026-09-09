@@ -78,7 +78,12 @@ the beginning of that capture was read, so a protocol later in it may be missing
 
 <section id=viewer hidden>
   <div id=list><div id=cols></div><div id=canvas></div></div>
+  <!-- narrow enough and the two panes cannot sit side by side, so they take
+       turns and this says which - see panes() in app.js, and the switch's own
+       rule in style.css, which is what puts it on screen at that width and
+       nowhere else -->
   <div id=panes>
+    <div id=panetabs></div>
     <div id=tree></div>
     <div id=bytes><div id=sources></div><pre id=hex></pre></div>
   </div>

@@ -14,6 +14,11 @@
   --narrow: 0;                    /* 1 below the breakpoint, for app.js to read
                                      off #viewer - see measure(); the width the
                                      page reflows at stays in this file alone */
+  --phone: 0;                     /* ...and 1 below the second one, where the folded
+                                     row does not fit either - the same arrangement,
+                                     for the width a screen held in one hand has.
+                                     Both numbers are this file's; app.js only reads
+                                     which of them it is under */
   --headrow: 24px;                 /* header bar height, shared by #filehead and #cols
                                        (list and flow mode alike) - kept off --row so
                                        a list's own row density doesn't move it */
@@ -384,6 +389,74 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
   }
 }
 
+/* ------------------------------------------------------------------ a phone */
+
+/* Below the width the folded row itself stops fitting. Its first line is the
+   fixed columns' own total - 648px with the columns this image ships, which is a
+   screen and two thirds - so what the narrow layout leaves is a row that has to
+   be panned to be read, and the half that goes off the side is the destination
+   address and the end of Info.
+
+   The row is dealt out over both of its lines instead of folded at Info alone.
+   The addresses take the whole of the first line beside the protocol: they are
+   the column that can least afford an ellipsis, a name cut short being the half
+   of a conversation the row is read for, and unlike Info there is no reading on
+   to recover it. The time and Info have the second. Nothing is pinned and nothing
+   pans - the tracks add up to the window - and the columns keep the order they
+   are read in down the row rather than across it.
+
+   Four of the five columns, then. No. is the one left out: a screen this size has
+   room for four, and the frame number is worth the least of them - it is a
+   position in a list that is on screen anyway, where the other four are each
+   something about the frame - so the width it had goes to Info instead. The
+   number is still in the diagram's gutter, and in the first line of the frame's
+   own dissection.
+
+   Three tracks carry both lines; head() sizes them (--gridp) and the classes
+   columns() puts on the cells are what place them here. A column this app has no
+   name for has no place among them, so at this width it is left out rather than
+   dropped into a track that was not meant for it; the wide layout still has it.
+
+   Everything the narrow layout above decided still holds here - the doubled row,
+   its two grid rows, the dimmed second line, the collapse to a single row once a
+   frame is picked - this being a width inside that one. */
+@media (max-width: 660px) {
+  #viewer { --phone: 1; }
+
+  /* Nothing left to head: a frame number, a timestamp, an a → b, a protocol name
+     and an Info string each say what they are, and one header line cannot label
+     two rows of cells anyway - the same reason #filehead goes in the capture
+     list. What that gives back is a row's worth of the window, and - with no
+     sticky band over it - the picked row's strip is the row and its border. */
+  #viewer:not(.flow) #cols { display: none; }
+  #viewer:not(.flow) { --strip: calc(var(--row) + 1px); }
+
+  #viewer:not(.flow) #canvas { min-width: var(--minwp); }
+  /* The one list in the page that draws a rule between its rows. The narrow
+     layout above needs none: both of its lines start in the second track, so the
+     frame number hanging out to the left of them is what says a row begins there.
+     Here there is no frame number to hang out and both lines start at the row's
+     own left edge, so two lines of a row and two rows read the same. A pixel is
+     cheaper than the alternative, which is indenting the second line and paying
+     for it out of Info again. It comes out of the row's own height rather than
+     adding to it, the rows being placed at multiples of --row. */
+  #viewer:not(.flow) .row {
+    grid-template-columns: var(--gridp);
+    border-bottom: 1px solid var(--line);
+    grid-template-rows: repeat(2, calc((var(--row) - 1px) / 2));
+  }
+  /* the four this layout has a place for, and nothing else - No. and Length among
+     what that leaves out. Written with the type selector so that Info's own
+     narrow rule above - which reaches it as :last-child, and would otherwise
+     outrank a bare class - gives up the column it spans there while keeping the
+     dimmed ink it lends it. */
+  #viewer:not(.flow) .row > span { display: none; }
+  #viewer:not(.flow) .row > span.proto { display: block; grid-area: 1 / 1 / 2 / 2; }
+  #viewer:not(.flow) .row > span.addr  { display: block; grid-area: 1 / 2 / 2 / 4; }
+  #viewer:not(.flow) .row > span.time  { display: block; grid-area: 2 / 1 / 3 / 3; }
+  #viewer:not(.flow) .row > span.info  { display: block; grid-area: 2 / 3 / 3 / 4; }
+}
+
 /* --------------------------------------------------- sequence diagram */
 
 /* Wireshark's flow graph over the same rows: a column per address, an arrow per
@@ -409,7 +482,15 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
    and ::before is the same slot again on the other side, so the address stays
    centred over its own lifeline and hovering the label moves nothing about. */
 .fnode::before { content: ''; }
-.fnode::before, .fnode > .fx { flex: 0 0 14px; }
+/* Both slots off one width, and that width from app.js - FX there, 4px narrower
+   on a phone, and gutter() sets it. It is the one thing about this label the
+   diagram itself has to know: the lane is sized to hold the whole address plus
+   these two (see widest()), so a number kept only here would be a lane that
+   clips - and an address is the one label on the page that may not be clipped.
+   Hence the ellipsis below being a backstop and nothing more: for a mono stack
+   whose characters run wider than the 7.25px app.js measures against, and for a
+   resolved name long enough to reach the lane's own ceiling. */
+.fnode::before, .fnode > .fx { flex: 0 0 var(--fxw); }
 .fnode > .fname { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .fnode > .fx {
   padding: 0; border: 0; background: none; font: inherit; line-height: 1;
@@ -469,6 +550,16 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 }
 #viewer.flow .num { left: 0; width: var(--numw); justify-content: flex-end; }
 #viewer.flow .ft { left: var(--numw); width: var(--timew); }
+/* ...and on a phone the gutter is the Time cell alone, No. being dropped from
+   this view as it is from the list's own row (see head() and gutter(), which is
+   where --numw goes to 0 so that .ft slides to the left edge). It has to be
+   hidden and not merely narrowed: the cell's padding is 12px of it that a width
+   of 0 does not take away. Hidden rather than left out of the row - the cells are
+   built once per view (see slot()), so a window growing back past this width has
+   this one, with its number already in it. */
+@media (max-width: 660px) {
+  #viewer.flow .num { display: none; }
+}
 /* the band's pair fill it rather than centring in it, the centring above being for
    the line of text inside them: a cell as tall as its own line box would overhang
    the band by the half pixel its border takes, and paint over the border */
@@ -572,16 +663,35 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 #viewer:not(.picked) > #list { flex: 1; height: auto; resize: none; }
 #tree, #bytes { overflow: auto; padding: 4px 0; contain: layout paint; background: var(--pane); }
 #tree { flex: 1; border-right: 1px solid var(--line); }
+/* the switch between the two, which is only ever needed at the width they stop
+   fitting side by side - see the media query at the end of this section */
+#panetabs { display: none; }
 /* a hex line is offset + 16 bytes + the ASCII column: 72 characters, so that is
-   what the pane is worth. Below that there is no room for it beside the tree, and
-   no room under it either that the tree would not miss more - so it goes. */
+   what the pane is worth wherever it fits beside the tree. */
 #bytes { flex: 0 0 74ch; }
-/* the width the list reflows at too - see the narrow window section above.
-   app.js is not told: bytes() fills #hex as it always did, and a window growing
-   back past this width has the pane it left, filled, with nothing to re-select. */
+/* The width the list reflows at too - see the narrow window section above. There
+   is no room for the pane beside the tree here, and none under it that the tree
+   would not miss more - so the two take turns instead of one of them going, and
+   the switch that says which comes on screen with them. A dissection is what a
+   frame is picked for, so the tree is the one showing to begin with; the pane a
+   frame is read in stays picked for the next frame, that being where the reading
+   is.
+
+   The hex is only built while it can be seen - see hexOn() in app.js, which reads
+   the same two states this rule does: what a reassembled stream comes to is a
+   megabyte of markup, and this pane is hidden more often than not. */
 @media (max-width: 1100px) {
-  #bytes { display: none; }
+  #panes { flex-direction: column; }
+  #panetabs {
+    display: flex; gap: 4px; flex: none; padding: 4px 6px;
+    border-bottom: 1px solid var(--line); background: var(--head);
+  }
+  #panetabs button { flex: 1; }   /* ...and which of them is on is drawn by the
+    source bar's own rule, further down: two bars of the same kind */
+  #tree, #bytes { flex: 1 1 0; }
   #tree { border-right: 0; }   /* nothing to its right to be set off from now */
+  #panes:not(.bytes) > #bytes { display: none; }
+  #panes.bytes > #tree { display: none; }
 }
 
 .n { white-space: nowrap; font: 12px var(--mono); }
@@ -595,7 +705,9 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 .kids { padding-left: 14px; }
 
 #sources { display: flex; gap: 4px; padding: 0 6px 4px; }
-#sources button.on { background: var(--sel); color: var(--selfg); border-color: var(--sel); }
+#sources button.on, #panetabs button.on {
+  background: var(--sel); color: var(--selfg); border-color: var(--sel);
+}
 #hex { margin: 0; padding: 0 6px; font: 12px/1.35 var(--mono); }
 #hex b { background: var(--hit); font-weight: inherit; }
 #hex i { color: var(--dim); font-style: normal; }     /* offsets */

@@ -22,14 +22,41 @@ let CROW = 26
 const PAGE = 200   // frames per /api/frames call
 const OVER = 8     // rows drawn above and below the viewport
 // fixed widths for the columns Wireshark keeps narrow, the rest to the last one -
-// which is Info, and wants everything it can get
+// which is Info, and wants everything it can get.
+//
+// The three time columns are sized to their text rather than guessed at - that
+// text being digits, and a countable number of them. A 12px cell of the mono
+// stack runs to 7.25px a character at its widest (DejaVu Sans Mono's advance;
+// Consolas is a tenth under it), and a row's cell has 12px of padding besides -
+// cw() below being the two together. So UTC holds its 27 characters -
+// `2026-07-24 15:00:48.910089Z` - in 208px, Time 12 of them in 104 and Delta 9 in 80.
+//
+// What the two relative formats spend past the six decimals is integer seconds:
+// five for Time, a capture that ran 27 hours, and two for Delta, which is the gap
+// between *displayed* frames and sub-second in anything unfiltered. Those two are
+// a ceiling rather than the width - a capture says how long it ran, and fit()
+// narrows the column to the stamps it really holds. Past the ceiling the cell
+// ellipsizes, which takes the fractional tail, so the slack is where it costs
+// least rather than on every row.
+//
+// ...and 7.25 is kept below rather than left in the prose: the diagram sizes its
+// lanes off the same number, an address over a lifeline being the one label on
+// the page that is never allowed to ellipsize - see widest().
+const MONO = 7.25
+const PAD = 12     // ...and what style.css spends on a cell's padding, both sides
 const ADDR = 'Source → Destination'   // the folded pair's own title - see columns()
 const WIDE = {
-  'No.': 76, Time: 112, Delta: 96, UTC: 208, Source: 150, SrcPort: 70,
+  'No.': 76, Time: 104, Delta: 80, UTC: 208, Source: 150, SrcPort: 70,
   Destination: 150, DstPort: 70, Protocol: 76, Length: 64,
   [ADDR]: 320,
 }
-const wide = c => WIDE[c] || 110
+// a cell holding n characters of that stack, its own padding included
+const cw = n => Math.ceil(n * MONO) + PAD
+// What the open capture has narrowed a column to, by title: WIDE is the widest
+// each one can be, this is what one of them turns out to want here. Only the time
+// columns are ever in it - see fit().
+const FIT = {}
+const wide = c => FIT[c] || WIDE[c] || 110
 const INFO_MIN = 160  // below this the 1fr column would hit 0 and vanish
 
 // The Time column in the three shapes the settings drawer offers. A shape is a
@@ -38,21 +65,76 @@ const INFO_MIN = 160  // below this the 1fr column would hit 0 and vanish
 // preferences file), two of them hidden, and the pick is only which of them the
 // Time slot draws. `col` is the title sharkd gives that column, which is what
 // WIDE above and columns() below both key off.
+//
+// `elapsed` is the two of them that are a length of time rather than a point in
+// one, and so the two a capture's own length says the width of - see fit().
 const TIMES = [
-  { key: 'rel', fmt: '%t', col: 'Time',
+  { key: 'rel', fmt: '%t', col: 'Time', elapsed: true,
     what: 'Since the capture began', eg: '9.712970' },
-  { key: 'delta', fmt: '%Gt', col: 'Delta',
+  { key: 'delta', fmt: '%Gt', col: 'Delta', elapsed: true,
     what: 'Since the previous displayed frame', eg: '0.000840' },
   { key: 'utc', fmt: '%Yut', col: 'UTC',
     what: 'Absolute, in UTC', eg: '2026-07-24 15:00:48.910089Z' },
 ]
 let TIME = TIMES.find(t => t.key === localStorage.getItem('time')) || TIMES[0]
 
+// The Time column of a capture that ran nine seconds is `9.712970`, eight
+// characters; the capture WIDE is sized for spends twelve. `status` says which of
+// the two this is, so the column is fitted to the capture rather than left at the
+// longest capture it might have been - and the four characters it does not spend
+// are 34px, a tenth of a phone's screen. They go to Info in the list and to the
+// diagram's lanes, whose room is what the gutter leaves and the gutter is this
+// same column (see gutter()).
+//
+// Downwards only. A capture longer than WIDE allows for keeps that ceiling and
+// ellipsizes its fractional tail as it did before, rather than taking a fifth of
+// the row from Info to spell out a number every row of the capture shares the
+// leading digits of. Delta is held to the same ceiling and bounded by the same
+// duration - it is the gap between two displayed frames, and no gap is longer
+// than the capture - so what the ceiling has as the common case the fit has as a
+// bound.
+//
+// Called with the capture's `status`, before anything this width reaches is laid
+// out: the list's grid (head()) and the diagram's gutter (gutter()).
+function fit(st) {
+  for (const t of TIMES) delete FIT[t.col]
+  if (typeof st.duration !== 'number') return   // a sharkd that does not say
+  // integer seconds, the point, and the six decimals after it
+  const chars = String(Math.floor(st.duration)).length + 7
+  for (const t of TIMES) if (t.elapsed) FIT[t.col] = Math.min(WIDE[t.col], cw(chars))
+}
+
 // the flow view's gutter is the list's own No. and Time columns, so a frame's
 // number and time sit in the same place whichever view draws it - and it moves
 // with the Time column the drawer picked, the list's own having moved
 let GUT = 0
 const LANE = [160, 400]  // node column: spread to fill the window, between these
+// ...and its floor on a phone, where the wide one leaves the diagram a lane and a
+// quarter beside the gutter - so an arrow never has both of its ends on screen,
+// which is the whole of what a sequence diagram is for. At 100px, and with the
+// gutter down to Time alone, the narrowest screen this layout is for holds most
+// of three lanes.
+//
+// A floor and not the width: what the lane is really sized by is the address over
+// it, and a lane narrower than that is a label the diagram cannot be read by (see
+// widest()). 100px is where a short address leaves it - 10.0.0.1 and the two ×
+// slots come to 78 - and anything longer takes the lane it needs.
+const LANEP = 100
+// The × beside a label and the empty slot mirroring it on the other side, which is
+// what keeps the address centred over its own lifeline. style.css draws both off
+// --fxw, which gutter() sets from these; the diagram has to know the number
+// because the pair comes out of the same lane the address does.
+//
+// Ten apiece on a phone rather than fourteen, which is 8px less lane behind every
+// address on the narrowest screen - and ten is still a button under a thumb.
+const FX = 14, FXP = 10
+// The cap on the gutter's Time cell on a phone, and so on the whole of that
+// gutter - see gutter(). The column's own width is up to 208px there (the UTC
+// format), which is half the screen and more than the diagram gets, so an
+// absolute stamp is sized to what brief() leaves of it: 12 characters, 104px by
+// the rule above WIDE. The two relative formats are already under that and keep
+// the width the list gave them, the difference going to the lanes.
+const FLOWT = 104
 const SIDE = 2     // lanes drawn either side of the window, as OVER is rows
 
 const $ = sel => document.querySelector(sel)
@@ -65,7 +147,7 @@ async function api(path, params, init) {
 }
 
 const S = {
-  file: null, filter: '', cols: [], total: 0,
+  file: null, filter: '', cols: [], cls: [], lead: 0, total: 0,
   st: null,          // the capture's `status`, kept for columns() to be re-read from
   vis: [],           // row.c indexes the list draws, in order
   ix: {},            // ...and the ones the flow view needs, by name
@@ -93,12 +175,20 @@ const flowing = () => S.view === 'flow'
 // --row moves with the window (the narrow layout doubles it for the list), and
 // every row is placed at a multiple of it - so it is read back after the view or
 // the window changes, along with --narrow, which is style.css saying which layout
-// that was. True if the height moved, which is the caller's cue to put the rows
-// back where the new one wants them.
+// that was - and --phone, its second breakpoint, at the width the folded row
+// itself stops fitting: what is below that is another set of list columns again
+// and another gutter. Both widths stay in that file alone; these two are only
+// what it decided.
+//
+// True if the height moved, which is the caller's cue to put the rows back where
+// the new one wants them; a breakpoint crossed without one is the caller's to
+// notice - see the ResizeObserver at the end.
 let NARROW = false
+let PHONE = false
 function measure() {
   const css = getComputedStyle($('#viewer'))
   NARROW = css.getPropertyValue('--narrow').trim() === '1'
+  PHONE = css.getPropertyValue('--phone').trim() === '1'
   const px = parseFloat(css.getPropertyValue('--row'))
   if (!px || px === ROW) return false
   ROW = px
@@ -110,19 +200,32 @@ function measure() {
 // Nothing scrolls to that row: it is put at the top and kept there.
 const pinned = () => NARROW && $('#viewer').classList.contains('picked')
 
-// the list lays its columns out in a grid, the flow view as spans over its gutter;
-// these carry the two the views share so .num/.ft can size off the same numbers
+// The list lays its columns out in a grid, the flow view as spans over its gutter;
+// these carry the two the views share so .num/.ft can size off the same numbers.
+//
+// A phone shares neither, and keeps only one of them. The list has folded its
+// Time column onto the row's second line by then and dropped No. altogether (see
+// head()), so there is no shared place left to keep - and what the diagram has
+// left over the gutter is 210px of a 390px screen, two lanes, where an arrow
+// wants both of its ends and their labels on it. So the same column goes here:
+// No. is a position in a list, and this view is not the list. Time stays,
+// because when an arrow happened is what the rows are read down, and it stays
+// pinned - at the column's own width, but never past FLOWT, brief() making an
+// absolute stamp fit that. --numw going to 0 is what slides .ft to the left edge; the
+// cell itself is hidden in style.css, padding being the one thing a width of 0
+// does not take away.
 function gutter() {
-  GUT = WIDE['No.'] + wide(TIME.col)
-  $('#viewer').style.setProperty('--numw', WIDE['No.'] + 'px')
-  $('#viewer').style.setProperty('--timew', wide(TIME.col) + 'px')
+  const timew = PHONE ? Math.min(wide(TIME.col), FLOWT) : wide(TIME.col)
+  const numw = PHONE ? 0 : WIDE['No.']
+  GUT = numw + timew
+  $('#viewer').style.setProperty('--numw', numw + 'px')
+  $('#viewer').style.setProperty('--timew', timew + 'px')
+  // the lane labels' own two slots go out from here as well - the same breakpoint,
+  // and layout() sizes a lane around what they leave of it
+  $('#viewer').style.setProperty('--fxw', (PHONE ? FXP : FX) + 'px')
 }
-gutter()
 measure()   // the window may already be narrow, and a paint can come before a resize
-
-// No. reads as numeric data, so both views set it off from the left-aligned
-// text columns.
-const numCol = title => title === 'No.' ? 'num' : ''
+gutter()    // ...which is also which of the two gutters this one is
 
 function span(cls, text) {
   const el = document.createElement('span')
@@ -204,7 +307,11 @@ function slot(i) {
       el.append(span('num'), span('ft'), line)
     } else {
       el.className = 'row'
-      S.cols.forEach((title, c) => el.appendChild(S.vis[c] === 'addr' ? pair() : span(numCol(title))))
+      S.cols.forEach((title, c) => {
+        const cell = S.vis[c] === 'addr' ? pair() : span()
+        cell.className = S.cls[c]
+        el.appendChild(cell)
+      })
     }
     el.addEventListener('mousedown', () => {
       const i = +el.dataset.i
@@ -244,7 +351,7 @@ function draw() {
       const cells = el.children
       for (let c = 0; c < S.vis.length; c++) {
         if (S.vis[c] === 'addr') fillPair(cells[c], row)
-        else cells[c].textContent = row ? (row.c[S.vis[c]] || '') : (c === 0 ? '…' : '')
+        else cells[c].textContent = row ? (row.c[S.vis[c]] || '') : (c === S.lead ? '…' : '')
       }
     }
   }
@@ -357,6 +464,8 @@ function columns(st) {
     src: at('%s', 'Source'), dst: at('%d', 'Destination'),
     sport: at('%uS', 'SrcPort'), dport: at('%uD', 'DstPort'),
     proto: at('%p', 'Protocol'), info: at('%i', 'Info'),
+    // the other two the phone layout has a place for; nothing else reads these
+    no: at('%m', 'No.'), len: at('%L', 'Length'),
   }
   // with no addresses to put in columns there is no diagram to offer
   $('#mode').hidden = S.ix.src < 0 || S.ix.dst < 0
@@ -373,7 +482,19 @@ function columns(st) {
     : shown.filter(i => !fold.has(i)).map(i => i === S.ix.src ? 'addr' : i)
   S.vis = drawn.filter(i => !alts.has(i)).map(i => i === rel ? S.ix.time : i)
   S.cols = S.vis.map(i => i === 'addr' ? ADDR : info[i].title)
+  // A class per drawn column, which is how style.css places them: the phone
+  // layout deals the row out over its two lines in an order S.cols does not
+  // give, and one line of grid tracks cannot say which cell goes where. Found by
+  // format, as everything else about a column here is - so a column this app has
+  // no name for gets no class, and the phone layout leaves it out rather than
+  // dropping it somewhere the tracks did not expect. No. reads as numeric data,
+  // so both views set it off from the left-aligned text columns.
+  S.cls = S.vis.map(i => i === 'addr' ? 'addr' : CLS[Object.keys(CLS).find(k => S.ix[k] === i)] || '')
 }
+
+// the class each column the phone layout can place is drawn with, by the S.ix
+// name it is found under
+const CLS = { no: 'num', time: 'time', proto: 'proto', len: 'len', info: 'info' }
 
 const cell = (row, name) => (S.ix[name] >= 0 ? row.c[S.ix[name]] : '') || ''
 
@@ -385,7 +506,7 @@ function head() {
   cols.style.minWidth = ''
   canvas.style.minWidth = ''
   if (flowing()) { unlane(); return }   // the lane slots were among what that emptied
-  for (const title of S.cols) cols.appendChild(span(numCol(title), title))
+  S.cols.forEach((title, c) => cols.appendChild(span(S.cls[c], title)))
   const last = S.cols.length - 1
   $('#viewer').style.setProperty('--grid',
     S.cols.map((c, i) => i === last ? '1fr' : wide(c) + 'px').join(' '))
@@ -407,6 +528,40 @@ function head() {
   if (give < 0) tracks.push('1fr')
   $('#viewer').style.setProperty('--gridn', tracks.join(' '))
   $('#viewer').style.setProperty('--minwn', fixed + 'px')
+
+  // ...and a third pair, for a phone. The folded row above does not fit one
+  // either: its first line is the fixed columns' own total, 648px with the
+  // columns this image ships, which is a screen and two thirds - so the row is
+  // dealt out over both of its lines rather than folded at Info alone.
+  //
+  // The addresses take the whole of the first line beside the protocol. They are
+  // the column that can least afford an ellipsis: a name cut short is the half of
+  // a conversation the row is read for, and unlike Info there is no reading on to
+  // recover it. The time and Info have the second.
+  //
+  // No. is not drawn at all. A screen this size has room for four of these five
+  // columns and the frame number is the one worth the least of them - it is a
+  // position in a list that is on screen anyway, where every other column is
+  // something about the frame - and what dropping it buys is the width it had,
+  // which goes to Info. The number is still in the diagram's gutter (see
+  // gutter()) and in the first line of the frame's own dissection.
+  //
+  // Three tracks carry both lines: Protocol, the rest of Time, and what is left.
+  // The addresses get everything past the first, and Info everything past Time -
+  // so the pair keeps its width whichever shape the Time column is in, and only
+  // Info gives way to a wider one. Which cell sits in which is style.css's, by
+  // the classes columns() put on them.
+  const timew = wide(TIME.col)
+  const protow = S.ix.proto >= 0 ? WIDE.Protocol : 0
+  $('#viewer').style.setProperty('--gridp',
+    `${protow}px ${Math.max(0, timew - protow)}px minmax(0, 1fr)`)
+  $('#viewer').style.setProperty('--minwp', Math.max(timew, protow) + 'px')
+
+  // The cell a row whose page is still in flight puts its … in: the leading one
+  // of whichever layout is drawing. That is No. in the two above and Protocol
+  // here, No. not being drawn at all - and it has to be a column with text of its
+  // own, the address pair being filled a span at a time (see fillPair).
+  S.lead = PHONE ? (['proto', 'time'].map(k => S.cls.indexOf(k)).find(i => i >= 0) ?? 0) : 0
 }
 
 // The views share the pages, the filter and the selection, so switching is a
@@ -508,10 +663,29 @@ function laneSlot(s) {
   return lanes[s]
 }
 
+// The lane the longest address in the diagram fits in whole: its characters at
+// MONO apiece, and the × and its mirror either side of them.
+//
+// Because a clipped address is not a shorter address - it is the wrong one. The
+// hosts of a capture share the network they are on, so the part an address is told
+// apart by is the end of it, which is the half an ellipsis takes: a phone at the
+// old 100px lane drew a screenful of "192.168.10…", one label the same as the
+// next. The lane is sized to the address instead, and the diagram scrolls
+// sideways - which it does anyway, having a lane per address of the capture.
+//
+// LANE[1] is still the ceiling, and no address reaches it: 400px is 51 characters
+// where the longest IPv6 address is 39. What can reach it is a resolved name -
+// a column of them is not addresses at all - and there style.css's ellipsis is
+// still the backstop.
+const widest = () =>
+  S.nodes.reduce((w, a) => Math.max(w, Math.ceil(a.length * MONO)), 0) +
+  2 * (PHONE ? FXP : FX)
+
 function layout() {
   const n = S.nodes.length
   const room = list.clientWidth - GUT - 12
-  S.nodeW = Math.max(LANE[0], Math.min(LANE[1], n > 0 ? Math.floor(room / n) : LANE[0]))
+  const min = Math.min(LANE[1], Math.max(PHONE ? LANEP : LANE[0], widest()))
+  S.nodeW = Math.max(min, Math.min(LANE[1], n > 0 ? Math.floor(room / n) : min))
   S.width = GUT + S.nodeW * n
   // min, not width: a diagram narrower than the window still wants full-width rows
   // to highlight and a header band that reaches the end of it
@@ -800,13 +974,21 @@ function guess(a) {
 // part the arrow itself already says.
 const trim = info => info.replace(/^(Request|Status): /, '').replace(/\s*\|\s*$/, '').trim()
 
+// The gutter's stamp on a phone, where the cell is FLOWT wide rather than the
+// column's own. Only an absolute one is touched, and only the two parts of it a
+// diagram does not read by: the date, which is the same on every row of a
+// capture, and the digits past the millisecond. A relative or delta time is
+// short already and comes through as it is. The list still draws the column
+// whole - this is the gutter's own copy of it.
+const brief = t => /^\d{4}-/.test(t) ? t.slice(11).replace(/(\.\d{3})\d*Z?$/, '$1') : t
+
 const SELF = 28    // px of stub for a frame addressed to where it came from
 
 function arrow(el, row) {
   const num = el.children[0], time = el.children[1], line = el.children[2]
   const label = line.children[0], left = line.children[1], right = line.children[2]
 
-  time.textContent = row ? cell(row, 'time') : '…'
+  time.textContent = row ? (PHONE ? brief(cell(row, 'time')) : cell(row, 'time')) : '…'
   num.textContent = row ? row.n : ''
   line.hidden = !row
   if (!row) return
@@ -960,6 +1142,33 @@ $('footer').addEventListener('click', e => {
 
 // -------------------------------------------------------------------- bytes ---
 
+// Narrow enough and the byte pane has no room beside the tree, so it takes turns
+// with it instead of going away: which of the two is showing is this, and the
+// switch above them is what sets it (style.css shows that switch at the same
+// width the panes stop fitting side by side). Kept across frames - a pane picked
+// once is the one the next frame is read in - and not remembered any further than
+// the session, being where the page is rather than how it looks.
+let PANE = 'tree'
+// ...and whether the bytes are on screen at all, which is what bytes() builds for:
+// a pane nothing can see is a hex dump of a reassembled stream built for nobody.
+const hexOn = () => !NARROW || PANE === 'bytes'
+
+function panes(pick) {
+  PANE = pick
+  $('#panes').classList.toggle('bytes', pick === 'bytes')
+  for (const b of $('#panetabs').children) b.classList.toggle('on', b.dataset.pane === pick)
+  if (pick === 'bytes') bytes(true)   // the pane it was hidden for was not built
+}
+
+for (const [pane, what] of [['tree', 'Detail'], ['bytes', 'Bytes']]) {
+  const b = document.createElement('button')
+  b.textContent = what
+  b.dataset.pane = pane
+  b.className = pane === PANE ? 'on' : ''
+  b.onclick = () => panes(pane)
+  $('#panetabs').appendChild(b)
+}
+
 function tabs() {
   const bar = $('#sources')
   bar.textContent = ''
@@ -987,22 +1196,28 @@ const CHAR = Array.from({ length: 256 }, (_, i) => {
 })
 
 function bytes(scroll) {
+  if (!hexOn()) { hex.textContent = ''; return }
+  // Sixteen to a line is 72 characters, which is what the pane is worth where it
+  // has one (see style.css) - and 520px, which no phone has. Eight is 39, so the
+  // dump fits the screen it is on and the ASCII column can be read without the
+  // pane being panned to reach it. The offsets say which line is which either way.
+  const wid = PHONE ? 8 : 16, mid = wid / 2 - 1
   const data = decode((S.sources[S.src] || {}).bytes)
   const from = S.mark ? S.mark[0] : -1, to = S.mark ? S.mark[0] + S.mark[1] : -1
   const out = []
-  for (let off = 0; off < data.length; off += 16) {
+  for (let off = 0; off < data.length; off += wid) {
     let h = '', a = '', open = false
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < wid; i++) {
       const p = off + i
       if (p >= data.length) {
         if (open) { h += '</b>'; a += '</b>'; open = false }
-        h += i === 7 ? '    ' : '   '
+        h += i === mid ? '    ' : '   '
         continue
       }
       const on = p >= from && p < to
       if (on && !open) { h += '<b>'; a += '<b>'; open = true }
       if (!on && open) { h += '</b>'; a += '</b>'; open = false }
-      h += HEX[data[p]] + (i === 7 ? '  ' : ' ')
+      h += HEX[data[p]] + (i === mid ? '  ' : ' ')
       a += CHAR[data[p]]
     }
     if (open) { h += '</b>'; a += '</b>' }
@@ -1523,7 +1738,10 @@ async function openCapture(file, want, num, as) {
   S.total = st.frames
   S.filter = want || ''
   S.order = []   // another capture, another set of addresses to arrange
+  fit(st)        // ...and its own width for the Time column, whichever is drawn
   columns(st)
+  gutter()       // which the diagram's gutter is too, and it was sized before
+                 // there was a capture to size it to
 
   $('#files').hidden = true
   $('#viewer').hidden = false
@@ -1725,10 +1943,18 @@ list.addEventListener('scroll', paint, { passive: true })
 // it was on rather than on the pixel, as in view()
 new ResizeObserver(() => {
   const top = Math.round(list.scrollTop / ROW)
+  const was = PHONE, wasNarrow = NARROW
   if (measure()) {
     canvas.style.height = height() + 'px'
     list.scrollTop = top * ROW
   }
+  // ...and crossing the second breakpoint is another set of list columns and
+  // another gutter, neither of which is a re-place of the rows: the grid and the
+  // widths both come from here (see head() and gutter()), and the diagram's lanes
+  // were laid out against the gutter it had. The byte pane comes and goes with the
+  // first breakpoint, and what it holds is only built while it can be seen.
+  if (PHONE !== was) { gutter(); head(); bytes() }
+  else if (NARROW !== wasNarrow) bytes()
   // the collapse to a single row is a resize of its own, and this is the callback
   // it arrives in - so the row it collapsed around is put back under the scrollport
   if (pinned() && S.selIdx >= 0) list.scrollTop = S.selIdx * ROW
