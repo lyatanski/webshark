@@ -12,10 +12,10 @@
 // column per address and an arrow per frame. Both read the same pages, so the
 // header's List/Flow button is a repaint and nothing else.
 
-// The list's row height is style.css's --row on #viewer, which the flow view
-// rescopes and the narrow layout doubles - so it is measured off the element
-// rather than kept here as a second copy of a number that now moves on its own.
-let ROW = 20       // ...until measure() reads the real one, which it does before any paint
+// The row height of both views is style.css's --row on #viewer, which the narrow
+// layout doubles - so it is measured off the element rather than kept here as a
+// second copy of a number that moves on its own.
+let ROW = 28       // ...until measure() reads the real one, which it does before any paint
 // the capture list's own row: --row as #files rescopes it, doubled again by the
 // narrow layout, so it is read back off the element as the packet list's is
 let CROW = 26
@@ -53,7 +53,7 @@ let TIME = TIMES.find(t => t.key === localStorage.getItem('time')) || TIMES[0]
 // with the Time column the drawer picked, the list's own having moved
 let GUT = 0
 const LANE = [160, 400]  // node column: spread to fill the window, between these
-const NODES = 40   // as many addresses as Wireshark's own flow graph draws
+const SIDE = 2     // lanes drawn either side of the window, as OVER is rows
 
 const $ = sel => document.querySelector(sel)
 
@@ -76,8 +76,6 @@ const S = {
   selIdx: -1, want: 0,
   nodes: [], node: new Map(),  // flow view: addresses, in the order first seen
   order: [],        // ...or the order they were dragged into, once they have been
-  overflow: false,  // ...and whether an address had to be left out of them
-  addrs: 0,         // addresses in the whole capture, which is the server's count
   nodeW: LANE[0], width: 0,
   open: new Set(),   // expanded tree nodes by field name, kept across frames
   sources: [], src: 0, mark: null,
@@ -92,11 +90,11 @@ let fileSlots = []   // ...and the capture list's own pool
 
 const flowing = () => S.view === 'flow'
 
-// --row moves with the view (the flow view rescopes it) and with the window (the
-// narrow layout doubles it), and every row is placed at a multiple of it - so it
-// is read back after either changes, along with --narrow, which is style.css
-// saying which layout that was. True if the height moved, which is the caller's
-// cue to put the rows back where the new one wants them.
+// --row moves with the window (the narrow layout doubles it for the list), and
+// every row is placed at a multiple of it - so it is read back after the view or
+// the window changes, along with --narrow, which is style.css saying which layout
+// that was. True if the height moved, which is the caller's cue to put the rows
+// back where the new one wants them.
 let NARROW = false
 function measure() {
   const css = getComputedStyle($('#viewer'))
@@ -264,6 +262,32 @@ function reveal(i) {
   if (bottom - list.scrollTop > list.clientHeight) list.scrollTop = bottom - list.clientHeight
 }
 
+// ...and sideways, which is the diagram's alone: a row there is an arrow between two
+// of its lanes, and a capture with more lanes than the window holds has no reason to
+// have put that arrow anywhere near it.
+//
+// The scroll is the least that brings the arrow on screen, exactly as the vertical
+// one above is - so an arrow already in view moves nothing, and a conversation
+// arrowed through a frame at a time sits still once its two lanes are on screen
+// rather than swinging between its ends. An arrow wider than the window has no
+// position that shows both, and lands on the left one.
+function revealX(row) {
+  if (!flowing() || !row) return
+  layout()   // the lanes may not have been laid out at this width yet - see above
+  const from = S.node.get(cell(row, 'src')), to = S.node.get(cell(row, 'dst'))
+  // a frame the address columns left an end of blank has no arrow: arrow() draws it
+  // as plain text from the gutter on, which is where the diagram itself starts
+  const ends = from === undefined || to === undefined ? [GUT, GUT] : [x(from), x(to)]
+  const pad = S.nodeW >> 1   // ...and with either end, the whole of the label over it
+  const lo = Math.min(...ends) - pad, hi = Math.max(...ends) + pad
+  // the window shows the diagram from the pinned gutter on, not from its own left
+  // edge: an arrow tucked behind No. and Time is one that has to be scrolled to
+  if (lo - GUT < list.scrollLeft) list.scrollLeft = lo - GUT
+  else if (hi - list.scrollLeft > list.clientWidth) {
+    list.scrollLeft = Math.min(lo - GUT, hi - list.clientWidth)
+  }
+}
+
 async function select(i) {
   let row = rowAt(i)
   if (!row) {
@@ -275,6 +299,7 @@ async function select(i) {
   }
   S.selIdx = i
   S.want = row.n
+  revealX(row)   // reveal() has put the row on screen; the diagram has an axis more
   sync(); paint()
 
   const prev = rowAt(i - 1)
@@ -359,7 +384,7 @@ function head() {
   cols.textContent = ''
   cols.style.minWidth = ''
   canvas.style.minWidth = ''
-  if (flowing()) return
+  if (flowing()) { unlane(); return }   // the lane slots were among what that emptied
   for (const title of S.cols) cols.appendChild(span(numCol(title), title))
   const last = S.cols.length - 1
   $('#viewer').style.setProperty('--grid',
@@ -395,16 +420,14 @@ function view(pick) {
     ? 'Sequence diagram (click for the packet list)'
     : 'Packet list (click for the sequence diagram)'
   $('#viewer').classList.toggle('flow', flowing())
-  measure()                               // ...which is what rescopes --row
+  measure()                               // the class above rescopes --row when narrow
   for (const el of slots) el.remove()
   slots = []
   unlane()
   head()
-  warnFlow()
   canvas.style.height = height() + 'px'   // as in reveal(): rows of another height
   list.scrollTop = top * ROW              // scroll to the same frame, not the same px
   sync(); paint()
-  addresses()   // after the paint: the rows are worth more than the warning is
 }
 
 $('#mode').onclick = () => view(flowing() ? 'list' : 'flow')
@@ -435,100 +458,102 @@ function hue(el, row, sel) {
 // pages fetched so far - the capture is not read ahead to find the rest, so a
 // column appears when a frame using it is first paged in, and the order is the
 // order of the frames. Filter first and the diagram is the conversation.
+//
+// Nothing caps how many. The lanes are drawn the way the rows are - only where the
+// window is over them, see layout() - so a capture with hundreds of addresses is a
+// diagram hundreds of lanes wide to scroll through, and still a screenful of
+// lifelines in the page.
 function nodes(rows) {
   let added = false
   for (const row of rows) {
     for (const addr of [cell(row, 'src'), cell(row, 'dst')]) {
       if (!addr || S.node.has(addr)) continue
-      if (S.nodes.length < NODES) { S.node.set(addr, S.nodes.length); S.nodes.push(addr); added = true }
-      else S.overflow = true
+      S.node.set(addr, S.nodes.length)
+      S.nodes.push(addr)
+      added = true
     }
   }
   if (added) arrange()   // a new column goes where the arranged ones leave it
-  warnFlow()
 }
 
-// Too many addresses for the diagram to draw them all: the frames using the ones
-// past NODES keep their rows, as plain text rather than arrows (see arrow()), and a
-// filter narrowing the capture down is the way back to a real diagram.
-//
-// Two things know about it. addresses() has asked the server for the whole
-// capture's count, so the warning is up before a row that overflows is anywhere
-// near the screen; S.overflow is the node list filling up as pages arrive, which is
-// the backstop for what that count leaves out - the MAC of a frame with no IP.
-function warnFlow() {
-  const over = S.addrs > NODES
-  $('#flowwarn').hidden = !(flowing() && (over || S.overflow))
-  $('#flowmsg').textContent = over
-    ? S.addrs + ' addresses, more than the ' + NODES + ' this diagram draws —'
-    : 'More addresses than the ' + NODES + ' this diagram draws —'
-}
-
-// One pass over the capture, so it is worth doing once per file and filter and not
-// on every switch into the view. It shares the capture's sharkd with the pages, and
-// that answers one request at a time: on a big capture the count can hold a page up
-// for a moment, which draws the placeholder rows a page in flight already draws.
-let asked = ''
-async function addresses() {
-  if (!flowing() || !S.file) return
-  const key = S.file + '\n' + S.filter
-  if (asked === key) return
-  asked = key
-  const res = await api('addresses', { f: S.file, filter: S.filter }).catch(() => null)
-  if (!res || asked !== key) return   // the filter moved on while this was out
-  S.addrs = res.n
-  warnFlow()
-}
-
-const lanes = []   // one lifeline element per node
-let laid = ''      // the geometry the header and the lifelines were built for
+const lanes = []   // recycled lane slots: a header label and the lifeline under it
+let laid = ''      // the geometry, and the run of nodes, those were last laid out for
 
 function unlane() {
-  for (const el of lanes) el.remove()
+  for (const l of lanes) { l.label.remove(); l.life.remove() }
   lanes.length = 0
   laid = ''
 }
 
 const x = i => GUT + S.nodeW * i + (S.nodeW >> 1)
 
+// A lane slot is a header label and its lifeline, built once and moved to whichever
+// node the window has scrolled over - slot()'s recycling turned sideways. The
+// diagram is as wide as the capture has addresses; what is in the page is the
+// screenful of lanes the window is on, and layout() puts them back on every scroll.
+function laneSlot(s) {
+  while (lanes.length <= s) {
+    const label = span('fnode')
+    const off = document.createElement('button')
+    off.className = 'fx'
+    off.textContent = '×'
+    label.append(span('fname'), off)
+    $('#cols').appendChild(label)
+
+    const life = document.createElement('div')
+    life.className = 'life'
+    canvas.appendChild(life)
+    lanes.push({ label, life })
+  }
+  return lanes[s]
+}
+
 function layout() {
   const n = S.nodes.length
   const room = list.clientWidth - GUT - 12
   S.nodeW = Math.max(LANE[0], Math.min(LANE[1], n > 0 ? Math.floor(room / n) : LANE[0]))
   S.width = GUT + S.nodeW * n
-  const sig = n + ':' + S.nodeW
-  if (sig === laid) return   // no node came in, and the window is the size it was
-  laid = sig
-
-  unlane()
   // min, not width: a diagram narrower than the window still wants full-width rows
   // to highlight and a header band that reaches the end of it
-  canvas.style.minWidth = S.width + 'px'
   const cols = $('#cols')
+  canvas.style.minWidth = S.width + 'px'
   cols.style.minWidth = S.width + 'px'
-  cols.textContent = ''
-  cols.append(span('num', 'No.'), span('ft', TIME.col))
-  S.nodes.forEach((addr, i) => {
+  // the gutter columns are pinned over the diagram (style.css keeps them there on
+  // its own); this is the one thing about them that is not the browser's - once
+  // there is diagram behind them they draw an edge to say so
+  $('#viewer').classList.toggle('slid', list.scrollLeft > 0)
+
+  // the lanes the window is over, and one either side, so a scroll of a few pixels
+  // has a column to move into rather than a gap to draw one in
+  const from = Math.max(0, Math.floor((list.scrollLeft - GUT) / S.nodeW) - SIDE)
+  const upto = Math.min(n, Math.ceil((list.scrollLeft + list.clientWidth - GUT) / S.nodeW) + SIDE)
+  const sig = n + ':' + S.nodeW + ':' + from + ':' + upto
+  if (sig === laid) return   // the same lanes, at the same width, in the same place
+  laid = sig
+
+  // the gutter's own titles, which head() empties the band of along with the rest
+  if (!cols.firstChild) cols.append(span('num', 'No.'), span('ft'))
+  cols.children[1].textContent = TIME.col
+
+  let s = 0
+  for (let i = from; i < upto; i++, s++) {
+    const addr = S.nodes[i]
+    const { label, life } = laneSlot(s)
     const held = drag && drag.addr === addr   // the column being dragged right now
-    const label = span('fnode' + (held ? ' grab' : ''))
+    label.className = 'fnode' + (held ? ' grab' : '')
+    label.hidden = false
     label.style.left = (x(i) - (S.nodeW >> 1)) + 'px'
     label.style.width = S.nodeW + 'px'
     label.title = addr + '\ndrag to move this column'
     label.dataset.addr = addr
-    label.append(span('fname', addr))
-    const off = document.createElement('button')
-    off.className = 'fx'
-    off.textContent = '×'
-    off.title = 'Hide ' + addr + ' — adds it to the display filter'
-    label.appendChild(off)
-    cols.appendChild(label)
-
-    const life = document.createElement('div')
+    label.children[0].textContent = addr
+    label.children[1].title = 'Hide ' + addr + ' — adds it to the display filter'
     life.className = 'life' + (held ? ' grab' : '')
+    life.hidden = false
     life.style.left = x(i) + 'px'
-    canvas.appendChild(life)
-    lanes.push(life)
-  })
+  }
+  // the slots the diagram has outgrown for now: kept, so scrolling back is a move
+  for (; s < lanes.length; s++) { lanes[s].label.hidden = true; lanes[s].life.hidden = true }
 }
 
 // -------------------------------------------------- moving the node columns ---
@@ -541,7 +566,11 @@ function layout() {
 // each time.
 let drag = null
 let edging = 0               // the frame callback scrolling a drag along, if one is
-const EDGE = 40, STEP = 14   // the band of the list a held pointer scrolls in, per frame
+// the band of the list a held pointer scrolls in, and the pixels per frame it
+// scrolls by. On the left the band is the pinned gutter's whole width instead: a
+// lane behind No. and Time cannot be seen, so a pointer held over them is asking
+// for the lanes further back rather than for the one it happens to be over.
+const EDGE = 40, STEP = 14
 
 // #cols scrolls sideways with the rows under it, and every position the diagram
 // carries is in the canvas's own coordinates
@@ -571,7 +600,10 @@ function place(addr, to) {
 // that only appears now the filter has changed - goes on the end.
 function arrange() {
   if (!S.order.length) return
-  const at = a => { const i = S.order.indexOf(a); return i < 0 ? S.order.length : i }
+  // a rank apiece rather than an indexOf per comparison: both lists are as long as
+  // the capture has addresses, and this runs on every page that brings a new one
+  const rank = new Map(S.order.map((a, i) => [a, i]))
+  const at = a => rank.has(a) ? rank.get(a) : S.order.length
   S.nodes.sort((a, b) => at(a) - at(b))
   renumber()
   laid = ''
@@ -602,7 +634,7 @@ function dragging(e) {
   // a lane off the side of the window: the list scrolls itself while the pointer
   // is held near an edge, a pointer held still having no more events to move on
   const box = list.getBoundingClientRect()
-  drag.edge = e.clientX > box.right - EDGE ? 1 : e.clientX < box.left + EDGE ? -1 : 0
+  drag.edge = e.clientX > box.right - EDGE ? 1 : e.clientX < box.left + GUT ? -1 : 0
   if (drag.edge && !edging) edging = requestAnimationFrame(scrolling)
   paint()
 }
@@ -783,13 +815,30 @@ function arrow(el, row) {
   const from = S.node.get(src), to = S.node.get(dst)
   let text = trim(cell(row, 'info'))
 
-  if (from === undefined || to === undefined) {
-    // an address past the node limit: the frame keeps its row, as a line of text
-    // rather than an arrow, so a filtered set is never quietly short
+  if (from === undefined && to === undefined) {
+    // neither end named, so there is no lane to put the frame anywhere near: it keeps
+    // its row, as a line of text from the gutter on rather than an arrow, so a
+    // filtered set is never quietly short
     line.className = 'fa plain'
     line.style.left = GUT + 'px'
     line.style.width = Math.max(320, S.width - GUT) + 'px'
     text = [src, dst].filter(Boolean).join(' → ') + '   ' + text
+    left.textContent = right.textContent = ''
+  } else if (from === undefined || to === undefined) {
+    // One end named and the other not, which is every link-layer frame of a Linux
+    // cooked capture - what `-i any` and ptcpdump write. SLL carries the address of
+    // the host that sent the frame and none at all for the one it went to, so an ARP
+    // or an STP has a lane it left and nowhere the capture can say it arrived.
+    //
+    // A stub off that lane then, rather than a row of text beside the diagram: the
+    // lane is the half that is known, and the frame belongs on it. It points the way
+    // the frame went, which is the other half of what the capture does say - out of
+    // that host, or into it.
+    const out = to === undefined
+    const at = x(out ? from : to)
+    line.className = 'fa stub'
+    line.style.left = (out ? at : at - SELF) + 'px'
+    line.style.width = SELF + 'px'
     left.textContent = right.textContent = ''
   } else {
     const a = x(from), b = x(to), self = from === to
@@ -988,18 +1037,15 @@ function rewind() {
   S.end = !S.filter
   S.nodes = []          // the node columns are the pages', and those are gone
   S.node.clear()
-  S.overflow = false
-  S.addrs = 0           // ...and the count was of the set the filter just replaced
-  warnFlow()
   unlane()
   list.scrollTop = 0
+  list.scrollLeft = 0   // ...and the lane it was scrolled along to is not there either
   $('#tree').textContent = ''
   hex.textContent = ''
   $('#sources').textContent = ''
   $('#field').textContent = ''
   $('#viewer').classList.remove('picked')
   counter(); sync(); paint()
-  addresses()   // the filter is the answer to the warning, so re-ask on every one
 }
 
 // Enter is where a filter ends on a phone: there is nowhere to click away to,
@@ -1012,8 +1058,6 @@ $('#filterbar').addEventListener('submit', e => {
   if (noHover.matches) $('#filter').blur()   // before the round-trip below, not after it
   if (S.file) filter($('#filter').value)
 })
-$('#flowfilter').onclick = () => $('#filter').focus()
-
 // Wireshark's own filter bar checks as you type and offers field names for
 // whatever identifier the caret sits in - the same two sharkd calls filter()
 // makes on submit, just fired live and against a token instead of the line.

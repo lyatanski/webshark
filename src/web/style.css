@@ -5,17 +5,18 @@
    stamps data-theme on <html> - so the attribute has to win in both directions,
    hence the :not() on the media query rather than a plain override. */
 :root {
-  --row: 20px;                    /* the height of a row, which #viewer.flow, #files
-                                      and the narrow window all rescope rather than
-                                      naming a second row variable each. app.js
-                                      places rows at multiples of it and reads it
-                                      back off the element - see measure() */
+  --row: 28px;                    /* the height of a row, the same in the list as in
+                                      the diagram - #files and the narrow window
+                                      rescope it rather than naming a second row
+                                      variable each. app.js places rows at multiples
+                                      of it and reads it back off the element - see
+                                      measure() */
   --narrow: 0;                    /* 1 below the breakpoint, for app.js to read
                                      off #viewer - see measure(); the width the
                                      page reflows at stays in this file alone */
   --headrow: 24px;                 /* header bar height, shared by #filehead and #cols
                                        (list and flow mode alike) - kept off --row so
-                                       each view's own row density doesn't move it */
+                                       a list's own row density doesn't move it */
   --nav: 0px;                     /* what a navigation bar covers of the bottom edge,
                                      which is 0 in a browser: only the Android shell
                                      has a window that runs under one, and it sets this
@@ -193,9 +194,9 @@ button {
    are: #filehead is a sticky header row (like #cols) and #filecanvas is the
    scrolled surface, populated with a small pool of recycled .caprow divs
    positioned by `top` - see fileSlot()/filesDraw() in app.js. */
-/* rescoping --row, as #viewer.flow does - see the :root comment - lets .caprow
-   (a var(--row) consumer) grow with it; must match CROW in app.js, this being the
-   one list app.js does not measure, its rows never moving.
+/* rescoping --row - see the :root comment - lets .caprow (a var(--row) consumer)
+   grow with it; must match CROW in app.js, this being the one list app.js does not
+   measure, its rows never moving.
    #filehead sits on --headrow instead, so the header bar's height doesn't ride
    along with it - see the :root comment. */
 #files { --row: 26px; display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
@@ -272,15 +273,21 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 /* ------------------------------------------------------------- packet list */
 
 #viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Centring the cells rather than stretching them is what puts a cell's text down
+   the middle of the row whatever line box it ends up with - and .row's own `font:`
+   below is a shorthand, so it resets line-height to normal and the row's height is
+   no line box at all. Same as #filehead/.caprow, and for the same reason; it is
+   also what lines the list's two leading columns up with the diagram's pinned pair,
+   which centre in a row of the same height. */
 #cols, .row {
-  display: grid; grid-template-columns: var(--grid);
+  display: grid; grid-template-columns: var(--grid); align-items: center;
 }
 /* the fixed columns' total plus a workable Info, from head() - a property rather
    than the inline style it used to be, so the narrow layout below can lower it.
    The flow view keeps setting its own inline, layout() being the only thing that
    knows the diagram's width. */
 #viewer:not(.flow) #cols, #viewer:not(.flow) #canvas { min-width: var(--minw); }
-.row { height: var(--row); line-height: var(--row); }
+.row { height: var(--row); }
 /* inside the scroller, so the header cannot drift out of line with the rows */
 #cols {
   position: sticky; top: 0; z-index: 2;   /* over the rows, which stack among themselves */
@@ -301,8 +308,14 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 }
 #canvas { position: relative; }
 .row { position: absolute; left: 0; right: 0; font: 12px var(--mono); cursor: default; }
-@media (hover: hover) { .row:hover { background: var(--head); } }
-.row.sel, .row.sel:hover { background: var(--sel); color: var(--selfg); }
+/* --rowbg is the colour a row is showing, which is not always a colour it paints:
+   a row with none of its own is left transparent, so that the lifelines behind it
+   carry on through - see .life. The flow view's gutter columns are pinned over the
+   diagram and have to paint something, so what they take is this, whichever of the
+   two it is. See #viewer.flow .num further down. */
+.row, .frow { --rowbg: var(--list); }
+@media (hover: hover) { .row:hover { --rowbg: var(--head); background: var(--rowbg); } }
+.row.sel, .row.sel:hover { --rowbg: var(--sel); background: var(--rowbg); color: var(--selfg); }
 .row.sel .port { color: inherit; }   /* dimmed port, but not against the sel background */
 .row.gap { color: var(--dim); }                      /* page still in flight */
 
@@ -314,15 +327,15 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
    one worth the most, so it drops to a second line of its own, full width, and
    the columns before it keep the first. The row is two lines tall instead of one:
    app.js places rows at multiples of --row, so --row doubles and the two lines
-   are the grid's own rows inside it - which is also why the line box has to be
-   reset to half of it, the rows being one line of text each.
+   are the grid's own rows inside it, each with the line box of one line of text -
+   the cells being centred, that is what puts either line down its own track.
    --gridn and --minwn are head()'s narrow pair of --grid and --minw: the same
    columns without Info, one of them stretching to fill the row.
    The header stays a single line. It loses its Info title with the column, the
    second line below it being unmistakable without one. */
 @media (max-width: 1100px) {
   #viewer { --narrow: 1; }              /* both views are narrow; only the list reflows */
-  #viewer:not(.flow) { --row: 40px; }   /* two of the wide list's rows - keep it even */
+  #viewer:not(.flow) { --row: 56px; }   /* two of the wide list's rows - keep it even */
   #viewer:not(.flow) #cols, #viewer:not(.flow) .row { grid-template-columns: var(--gridn); }
   #viewer:not(.flow) #cols, #viewer:not(.flow) #canvas { min-width: var(--minwn); }
   #viewer:not(.flow) #cols > span:last-child { display: none; }
@@ -376,16 +389,19 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
 /* Wireshark's flow graph over the same rows: a column per address, an arrow per
    frame. app.js owns the geometry - every position here comes from it in pixels,
    and the gutter widths below have to add up to its GUT. */
-/* rescoping --row here moves .frow alone - #cols is on --headrow, not --row, so
-   the header bar keeps its own height instead of following the diagram's rows */
-#viewer.flow { --row: 28px; }
-#viewer.flow #cols { display: block; }
+/* the diagram's rows are the list's rows - both are on the :root --row, and #cols
+   is on --headrow either way, so neither header bar rides along with them */
+#viewer.flow #cols { display: flex; }   /* the gutter titles its only two items -
+   the node labels are absolute, so out of the line */
 #viewer.flow #cols > .fnode { padding: 0; }   /* a node label is sized to its lane;
    No. and Time keep the list's column padding, which is what lines the two up */
 .fnode {
   position: absolute; top: 0; display: flex; align-items: center; justify-content: center;
   text-align: center; font-family: var(--mono); overflow: hidden; cursor: grab;
 }
+/* a lane slot the diagram has scrolled off - layout() keeps it for the way back.
+   Spelt out because the display above outranks the UA's own [hidden] rule. */
+.fnode[hidden] { display: none; }
 /* A column can be dragged to another lane and taken out of the diagram
    altogether - place() and hide() in app.js. The × sits against the address
    rather than out at the lane's edge, where a wide lane would leave it looking
@@ -418,32 +434,62 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 .life { position: absolute; top: 0; bottom: 0; z-index: 0; border-left: 1px dashed var(--line); }
 .frow {
   position: absolute; left: 0; right: 0; z-index: 1;
-  height: var(--row); overflow: hidden;           /* a label may outgrow its arrow */
+  display: flex;   /* the gutter pair, each as tall as the row; the arrow is absolute */
+  height: var(--row);
+  /* clip, not hidden - a label may outgrow its arrow and has to be cut off at the
+     row, but overflow: hidden would make the row a scroll container of its own,
+     and the pinned gutter columns inside it would stick to that instead of to
+     the list */
+  overflow: clip;
   font: 12px var(--mono); cursor: default;
 }
-@media (hover: hover) { .frow:hover { background: var(--head); } }
-.frow.sel, .frow.sel:hover { background: var(--sel); color: var(--selfg); }
-/* the gutter is the packet list's No. and Time columns over again - same widths,
+@media (hover: hover) { .frow:hover { --rowbg: var(--head); background: var(--rowbg); } }
+.frow.sel, .frow.sel:hover { --rowbg: var(--sel); background: var(--rowbg); color: var(--selfg); }
+/* The gutter is the packet list's No. and Time columns over again - same widths,
    same padding, so switching views leaves both where they were. --numw/--timew
    come from WIDE in app.js, which the list's grid is built from too, and GUT is
-   their sum */
-#viewer.flow .num, .ft {
-  position: absolute; padding: 0 6px;
-  overflow: hidden; white-space: nowrap;
+   their sum.
+
+   And it is pinned. The diagram scrolls sideways under it, while which frame an
+   arrow is and when it happened are what every row is read by, so the two stay
+   where they are however far out the window has gone. Sticky rather than an
+   offset written on every scroll: the browser holds them in place itself, in the
+   same frame as the scroll rather than the one after it. Two of them side by
+   side, each sticking where the one before it ends, so the gutter arrives whole.
+   Being over the diagram, they need something to hide what passes behind them -
+   the row's own colour, which is what --rowbg carries. */
+#viewer.flow .num, #viewer.flow .ft {
+  position: sticky; z-index: 1; flex: none;
+  /* the box is the whole row - what goes behind the pair has to go behind all of
+     it, not around a line of text - and the line of text is centred in it, which
+     is where the list's own line-height puts the same two columns, to the pixel.
+     The band's titles centre in the band for the same reason. */
+  display: flex; align-items: center;
+  padding: 0 6px; overflow: hidden; white-space: nowrap;
 }
-#viewer.flow .num { left: 0; width: var(--numw); text-align: right; }
-.ft { left: var(--numw); width: var(--timew); text-align: left; }
-/* A row hangs its pair off the bottom, level with the arrow. The header's pair are
-   column titles like the list's, so they start at the top of the band, where an
-   in-flow line box would - anchored to the bottom instead they draw 2px above the
-   list's titles, the band's own last pixel being its border. */
-.frow > .num, .frow > .ft { bottom: 1px; }
-#viewer.flow #cols > .num, #viewer.flow #cols > .ft { top: 0; }
+#viewer.flow .num { left: 0; width: var(--numw); justify-content: flex-end; }
+#viewer.flow .ft { left: var(--numw); width: var(--timew); }
+/* the band's pair fill it rather than centring in it, the centring above being for
+   the line of text inside them: a cell as tall as its own line box would overhang
+   the band by the half pixel its border takes, and paint over the border */
+#viewer.flow #cols > .num, #viewer.flow #cols > .ft {
+  align-self: stretch; background: var(--head);
+}
+#viewer.flow .frow > .num, #viewer.flow .frow > .ft { background: var(--rowbg); }
+/* ...and once there is something behind them, an edge to say so - drawn inside
+   the row, which clips it, rather than as a shadow over the next one */
+#viewer.flow.slid #cols > .ft, #viewer.flow.slid .frow > .ft {
+  box-shadow: 1px 0 0 var(--line);
+}
 .frow.sel .fl > i, .frow.sel .fp { color: inherit; }
 
 /* the arrow is a box of no height stretched between two lifelines: its bottom
-   border is the line, ::after the head, and label and ports sit above it */
-.fa { position: absolute; bottom: 7px; height: 0; border-bottom: 1px solid currentColor; }
+   border is the line, ::after the head, and label and ports sit above it.
+   The offset is what centres the label: 4px up, plus the border and the 2px the
+   label clears the line by, puts the label's line box down the middle of the row -
+   which is where the list's Info is, so the same text is on the same line in
+   either view. Everything else in the row hangs off this one number. */
+.fa { position: absolute; bottom: 4px; height: 0; border-bottom: 1px solid currentColor; }
 .fa::after {
   content: ''; position: absolute; right: -1px; bottom: -4px; width: 0; height: 0;
   border: 4px solid transparent; border-right-width: 0;
@@ -461,8 +507,12 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
   text-align: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 .fa.ports > .fl { left: 36px; right: 36px; }        /* ...unless the ends are taken */
-/* a stub back to the lifeline it left has no middle to centre a label on */
+/* a stub back to the lifeline it left has no middle to centre a label on, and nor
+   has one off a lane the frame named no other end than - see arrow(). Both read from
+   the lifeline out, and the second wants the room: what it carries is a whole Info,
+   where a self-arrow's is one host talking to itself. */
 .fa.self > .fl { left: 36px; right: -320px; text-align: left; }
+.fa.stub > .fl { left: 36px; right: -460px; text-align: left; }
 /* nothing to centre it on, and the row may be wider than the window */
 .fa.plain > .fl { left: 8px; right: 8px; text-align: left; }
 .fl > i { color: var(--dim); font-style: normal; }  /* protocol */
@@ -470,13 +520,6 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 .fp { position: absolute; bottom: 2px; font-size: 10px; color: var(--dim); }
 .fp.a { left: 3px; }
 .fp.b { right: 3px; }
-
-#flowwarn {
-  flex: 0 0 auto; padding: 5px 10px; font: 12px var(--mono);
-  color: #c60; background: color-mix(in srgb, #c60 12%, var(--bg));
-  border-bottom: 1px solid var(--line);
-}
-#flowwarn a { color: inherit; text-decoration: underline; cursor: pointer; }
 
 /* -------------------------------------------------------- coloring rules */
 
@@ -500,16 +543,24 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
    show.
 
    A browser too old for relative colour syntax draws no row colours rather than
-   wrong ones: the declaration is invalid, and the row keeps the list's own
-   background - which is what a frame no rule matched gets anyway, its --rbg
-   never having been set. */
-.row.hue, .frow.hue {
-  background: oklch(from var(--rbg) var(--huel) var(--huec) h);
-  color: color-mix(in srgb, var(--rfg) var(--hueink), var(--fg));
-}
-@media (hover: hover) {
-  .row.hue:hover, .frow.hue:hover {
-    background: oklch(from var(--rbg) var(--huelh) var(--huec) h);
+   wrong ones, and is asked outright rather than left to drop an invalid
+   declaration: --rowbg is a custom property, which would take the unusable value
+   and hand it on to everything painting the row - the pinned gutter columns
+   included, and a gutter with no background is a hole in the diagram rather than
+   a colour missing. Behind the @supports the row keeps the list's own background,
+   which is what a frame no rule matched gets anyway, its --rbg never having been
+   set. */
+@supports (color: oklch(from red l c h)) {
+  .row.hue, .frow.hue {
+    --rowbg: oklch(from var(--rbg) var(--huel) var(--huec) h);
+    background: var(--rowbg);
+    color: color-mix(in srgb, var(--rfg) var(--hueink), var(--fg));
+  }
+  @media (hover: hover) {
+    .row.hue:hover, .frow.hue:hover {
+      --rowbg: oklch(from var(--rbg) var(--huelh) var(--huec) h);
+      background: var(--rowbg);
+    }
   }
 }
 
