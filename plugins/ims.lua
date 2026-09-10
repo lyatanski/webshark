@@ -36,14 +36,27 @@
 -- one field loses the distinction that matters most in IMS. A subscriber has
 -- one private identity, the IMPI, which authenticates and is never routed to,
 -- and a set of public identities, the IMPUs, which route and never
--- authenticate. So they are two fields, `ims.impi` and `ims.impu`, and a key
--- can honestly be both: this deployment derives the IMPI from the IMSI and the
--- barred IMPU from the IMPI, so `001010000000001` is the user part of each.
+-- authenticate. So they are two fields, `ims.impi` and `ims.impu`:
 --
 --     Authorization username, Cx User-Name, <PrivateID>          -> ims.impi
 --     To, From, P-Asserted/Preferred-Identity, Request-URI,
---     reg-event aor, Cx Public-Identity, <Identity>              -> ims.impu
+--     reg-event aor, Cx Public-Identity, <Identity>,
+--     Ro/Rf User-Name                                            -> ims.impu
 --     Subscription-Id-Data          -> either, per Subscription-Id-Type
+--
+-- User-Name is the one of those whose role is the application's to say and not
+-- the AVP's, which `user_name_role` is about: reading the Ro one as an IMPI is
+-- what used to put the MSISDN on `ims.impi`.
+--
+-- A UE with no ISIM derives its IMPI from the IMSI and, having no public
+-- identity to register with, a temporary one from the IMPI (23.003 s13.4B), so
+-- `001010000000001` is the user part of both and every REGISTER spells it in
+-- To as readily as in the Authorization header. That temporary identity is
+-- barred - the HSS says so in the User-Data of the SAA, and a key that is also
+-- an IMPI is the derived one whether or not that message is in the capture
+-- (`keep`) - and a barred identity routes to nobody, so it stays an `ims.id`
+-- and the IMPI it was derived from, and never reaches `ims.impu`. What is
+-- public about this subscriber is the MSISDN.
 --
 -- Splitting them is the easy half. Relating them is the point: the MSISDN and
 -- the IMSI of one subscriber share no substring, so `ims.impu == "359000000001"`
@@ -154,9 +167,9 @@ local dia = {
     session  = Field.new('diameter.Session-Id'),
     subtype  = Field.new('diameter.Subscription-Id-Type'),
     subdata  = Field.new('diameter.Subscription-Id-Data'),
-    impi     = {
-        Field.new('diameter.User-Name'),
-    },
+    -- not in a role list of its own: which identity it holds is
+    -- `user_name_role`, per application
+    username = Field.new('diameter.User-Name'),
     impu     = {
         Field.new('diameter.Public-Identity'),
     },
@@ -170,7 +183,21 @@ local dia = {
 -- so the two flat lists are put back together in `by_offset` below.
 local xml = { tag = Field.new('xml.tag'), cdata = Field.new('xml.cdata') }
 
-local USER_DATA = { privateid = 'impi', identity = 'impu' }
+-- The elements of the User-Data that carry an identity, and the one that
+-- qualifies it. BARRING is not a role - nothing is filed under it - it is how
+-- the walk in `read_user_data` knows whose text it is reading.
+local BARRING = 'barring'
+local USER_DATA = {
+    privateid         = 'impi',
+    identity          = 'impu',
+    barringindication = BARRING,
+}
+
+-- The identities the HSS has barred. Session-wide, like the classes and for
+-- the same reason: it is barred on every frame that spells it, and all but one
+-- of those frames is not the SAA that said so. Cleared in `reset` with the
+-- rest of the state, and declared up here because `read_user_data` fills it.
+local barred = {}
 
 -- RFC 4006 Subscription-Id-Type. The IMSI is not literally an IMPI, but with no
 -- ISIM the IMPI is derived from it (23.003 s13.3) and normalizing both leaves
@@ -202,6 +229,7 @@ local ROLES = { 'impi', 'impu' }
 -- come out as Cx.
 local REF = {
     [0]        = 'base',   -- CER/DWR/DPR, no application
+    [3]        = 'Rf',     -- Diameter base accounting, which in IMS is Rf
     [4]        = 'Ro',
     [16777216] = 'Cx',
     [16777217] = 'Sh',
@@ -223,6 +251,25 @@ local CMD = {
     [317] = 'CL', [318] = 'AI', [319] = 'ID', [320] = 'DS', [321] = 'PU',
     [322] = 'RS', [323] = 'NO',
 }
+
+-- Which identity a User-Name AVP holds is the application's to define, and
+-- they do not agree. 29.229 s6.3.1 makes the Cx one the IMPI, 29.272 the S6a
+-- one the IMSI; 32.299 defines nothing for Ro and Rf beyond RFC 6733's "the
+-- user name", and what a CTF puts there is the served party as SIP asserted
+-- it - Kamailio's ims_charging copies the very string it puts in
+-- Subscription-Id (`user_name = subscr.id`, ims_ro.c), which is
+-- `sip:359000000001@...`, an IMPU. Reading that as an IMPI is what makes the
+-- MSISDN of every charged call a private identity.
+local USER_NAME = { Ro = 'impu', Rf = 'impu' }
+
+-- Shape settles what the table has no entry for: an IMPI is an NAI (23.003
+-- s13.3), a bare user@realm, and never a URI, so a scheme in front of a
+-- User-Name says public whoever sent it - which is also the answer for an
+-- application this plugin has never heard of.
+local function user_name_role(ref, raw)
+    if USER_NAME[ref] then return USER_NAME[ref] end
+    return tostring(raw):match('^%a[%w%+%-%.]*:') and 'impu' or 'impi'
+end
 
 -- ------------------------------------------------------------- identities ---
 
@@ -330,17 +377,36 @@ end
 -- <PrivateID>001010000000001@...</PrivateID> is the IMPI and every
 -- <PublicIdentity><Identity> is one IMPU of the same subscriber. Any other
 -- element of the User-Data, and any other XML in the frame, is skipped.
+--
+-- Except <BarringIndication>, which is not an identity but decides what kind
+-- one is. It qualifies the <Identity> of its own <PublicIdentity> element and
+-- the schema puts it first (tPublicIdentity of the CxDataType, 29.228 Annex
+-- C), so carrying the flag forward from the element that opened the pair to
+-- the identity that follows it is enough. A barred identity is remembered as
+-- such for the whole session, because it is barred wherever it turns up and
+-- most of the frames that spell it are not this one.
 local function read_user_data(set)
-    local current
+    local current, barring
     for _, item in ipairs(by_offset(xml.tag, xml.cdata)) do
         if item.name then
             -- open and close tags arrive alike, and a close ends the element it
             -- names rather than starting one, so it clears the role instead
-            current = not item.name:match('^%s*</')
-                and USER_DATA[item.name:lower():gsub('[^%a]', '')]
-                or nil
+            local element = item.name:lower():gsub('[^%a]', '')
+            if item.name:match('^%s*</') then
+                current = nil
+            else
+                current = USER_DATA[element]
+                -- the identity this one is about has not been read yet
+                if element == 'publicidentity' then barring = false end
+            end
+        elseif current == BARRING then
+            -- tBool is an xs:boolean, so both spellings of true are one
+            local flag = tostring(item.value):lower():gsub('%s', '')
+            barring = flag == '1' or flag == 'true'
         elseif current then
-            add(set, normalize(item.value), current)
+            local key = normalize(item.value)
+            if key and barring and current == 'impu' then barred[key] = true end
+            add(set, key, current)
         end
     end
 end
@@ -365,6 +431,8 @@ end
 -- agree on what a frame said (see the dissector for what is and is not cached).
 -- Session-Id -> identity set is the request state the answers are stitched
 -- from, and class_of is the IMPI/IMPU binding every frame is read through.
+-- `barred`, the third of them, is declared with the User-Data reader that
+-- fills it.
 local cache, by_session, class_of
 local ue_net, ue_bits
 
@@ -378,7 +446,7 @@ local function parse_subnet(pref)
 end
 
 local function reset()
-    cache, by_session, class_of = {}, {}, {}
+    cache, by_session, class_of, barred = {}, {}, {}, {}
     ue_net, ue_bits = parse_subnet(ims.prefs.ue_subnet)
 end
 
@@ -439,6 +507,30 @@ local function unite(observed)
     end
 end
 
+-- A key refused the public role is still a key: it is what the REGISTER
+-- spells, how the frame reaches its class, and what `ims.id` has to match.
+-- What is dropped is only the claim that somebody can be reached at it.
+--
+-- Two things make that claim false. The HSS can say so outright, in the
+-- <BarringIndication> of the User-Data it hands out - a barred identity routes
+-- to nobody, that being what barred means. And a key that is also an IMPI says
+-- it by being one: identities are keyed by their bare user part, so a public
+-- identity that keys the same as a private one is the temporary public
+-- identity derived from it (23.003 s13.4B), which exists because a UE with no
+-- ISIM has nothing else to put in the To of its first REGISTER, and which that
+-- same clause bars. The second rule is what holds in a capture that begins
+-- after the registration the first one would have been learned from.
+--
+-- Filtering here rather than in the tree is also what keeps `ims.related`
+-- honest: an addition nobody can see is not one the flag should claim.
+local function keep(out, private, key, role)
+    if role == 'impu' and (barred[key] or private[key]) then
+        push(out.all, out.seen, key)
+        return false
+    end
+    return add(out, key, role)
+end
+
 -- What the frame spells, plus everything else those subscribers are known by.
 -- Returns the widened set and whether anything was in fact added, which is what
 -- `ims.related` reports.
@@ -447,7 +539,6 @@ local function relate(observed)
     local classes, seen = {}, {}
     for _, role in ipairs(ROLES) do
         for _, key in ipairs(observed[role]) do
-            add(out, key, role)
             local cls = class_of[key]
             if cls and not seen[cls] then
                 seen[cls] = true
@@ -455,10 +546,25 @@ local function relate(observed)
             end
         end
     end
+
+    -- every private identity in play, gathered before anything is added: a
+    -- frame that spells only the temporary identity - an Rx AAR for it, say -
+    -- learns that it is a private one from the class rather than from itself
+    local private = {}
+    for _, key in ipairs(observed.impi) do private[key] = true end
+    for _, cls in ipairs(classes) do
+        for _, key in ipairs(cls.impi) do private[key] = true end
+    end
+
+    for _, role in ipairs(ROLES) do
+        for _, key in ipairs(observed[role]) do
+            keep(out, private, key, role)
+        end
+    end
     for _, cls in ipairs(classes) do
         for _, role in ipairs(ROLES) do
             for _, key in ipairs(cls[role]) do
-                if add(out, key, role) then related = true end
+                if keep(out, private, key, role) then related = true end
             end
         end
     end
@@ -487,7 +593,9 @@ local function diameter_frame()
             or string.format('%s/%d%s', ref, code.value, request and 'R' or 'A')
     end
 
-    read(entry.observed, 'impi', dia.impi)
+    for _, fi in ipairs { dia.username() } do
+        add(entry.observed, normalize(fi.value), user_name_role(entry.ref, fi.value))
+    end
     read(entry.observed, 'impu', dia.impu)
     read_subscription(entry.observed)
     read_user_data(entry.observed)
