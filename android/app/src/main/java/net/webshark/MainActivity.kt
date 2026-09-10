@@ -109,11 +109,10 @@ class MainActivity : Activity() {
         // anyway, and in landscape it letterboxes the window off the cutout
         // whatever the frame below then asks for).
         //
-        // Asked for because in portrait what ends up under it is not the page:
-        // the notch is inside the strip the status bar already costs, and what
-        // is in that strip is the band. Landscape is the one place it would
-        // cost an edge of its own, and there the page is given it instead -
-        // see the frame.
+        // Asked for because what ends up under it is never the page: in
+        // portrait the notch is inside the strip the status bar already costs,
+        // and in landscape the frame below clears the edge the cutout takes
+        // for itself. What is behind the camera either way is the band.
         window.attributes = window.attributes.apply {
             layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
@@ -217,14 +216,16 @@ class MainActivity : Activity() {
         // makes before its own first paint and wrong only for a theme the
         // drawer has pinned.
         //
-        // Three edges, but at the sides only what the bars cost there. A cutout
-        // at a side is landscape's - a hole a few pixels down one long edge -
-        // and a band the whole height of the screen to clear it is the worse
-        // trade of the two: the page loses a strip of the packet list to the
-        // camera, which is a corner of a table, and keeps the width. So the
-        // sides clear the bars and nothing else, and the top - where a notch
-        // is either inside the status bar's strip or a little taller than it -
-        // clears whichever of the two reaches further.
+        // Three edges, and each of them clears whatever reaches furthest into
+        // the screen there - a bar, a cutout, or the one behind the other. In
+        // portrait that is the status bar, a notch being either inside the
+        // strip it already costs or a little taller than it. In landscape it is
+        // the cutout's own edge: a hole a few pixels down one long side, which
+        // nothing narrower than a band the whole height of the screen clears.
+        // That band is paid for in width, which is the thing a table would
+        // rather have - but the trade the other way is the camera sitting on
+        // the rows themselves, and a hole punched through an address is worse
+        // to read past than a column that ends sooner.
         //
         // The bottom is not inset, and is the one edge nothing out here paints:
         // the page runs to it and the navigation bar sits on the footer's own
@@ -239,27 +240,29 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             setOnApplyWindowInsetsListener { view, insets ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // The bars alone for the sides, the union of the two for
-                    // the top and the bottom, which is where a cutout is ever
-                    // asked to be cleared.
-                    val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                    // The union of the two at every edge: which of them
+                    // reaches further at any one of them is the phone's
+                    // business rather than this listener's.
                     val room = insets.getInsets(
                         WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-                    view.setPadding(bars.left, room.top, bars.right, 0)
+                    view.setPadding(room.left, room.top, room.right, 0)
                     foot(room.bottom)
                 } else {
                     // Pre-R they are two separate numbers per edge and the
                     // wider is the one that clears both. The bars' half is only
                     // reported at all because of the LAYOUT_ flags in paint;
                     // the cutout is API 28, which is every version this runs on.
-                    // Its side insets are dropped here too, though SHORT_EDGES
-                    // above means there is never anything in them to drop.
+                    // The sides are asked the same question as the top here,
+                    // though a cutout never answers it: SHORT_EDGES above
+                    // letterboxes this window off a landscape cutout instead of
+                    // laying it out under one, so there is nothing at a side to
+                    // clear until the R branch, where ALWAYS puts it back.
                     val cutout = insets.displayCutout
                     @Suppress("DEPRECATION")
                     view.setPadding(
-                        insets.systemWindowInsetLeft,
+                        maxOf(insets.systemWindowInsetLeft, cutout?.safeInsetLeft ?: 0),
                         maxOf(insets.systemWindowInsetTop, cutout?.safeInsetTop ?: 0),
-                        insets.systemWindowInsetRight,
+                        maxOf(insets.systemWindowInsetRight, cutout?.safeInsetRight ?: 0),
                         0)
                     @Suppress("DEPRECATION")
                     foot(maxOf(insets.systemWindowInsetBottom, cutout?.safeInsetBottom ?: 0))
