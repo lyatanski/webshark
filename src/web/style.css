@@ -5,12 +5,12 @@
    stamps data-theme on <html> - so the attribute has to win in both directions,
    hence the :not() on the media query rather than a plain override. */
 :root {
-  --row: 28px;                    /* the height of a row, the same in the list as in
-                                      the diagram - #files and the narrow window
-                                      rescope it rather than naming a second row
-                                      variable each. app.js places rows at multiples
-                                      of it and reads it back off the element - see
-                                      measure() */
+  --row: 28px;                    /* the height of a row, the same in every list - the
+                                      packet list, the diagram and the capture list -
+                                      the narrow window rescoping it rather than naming
+                                      a second row variable. app.js places rows at
+                                      multiples of it and reads it back off the element
+                                      - see measure() */
   --narrow: 0;                    /* 1 below the breakpoint, for app.js to read
                                      off #viewer - see measure(); the width the
                                      page reflows at stays in this file alone */
@@ -36,6 +36,12 @@
   --sel: #2f6fd0;
   --selfg: #fff;
   --hit: #fff6c2;
+  /* the three expert severities a row or a tree node is marked with - see SEV in
+     app.js. Dark takes them up rather than across: the same three colours read as
+     the same three things, at a lightness a dark ground can carry. */
+  --note: #0e7490;
+  --warn: #c60;
+  --err: #d33;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --pane: color-mix(in srgb, #fff 8%, var(--bg));
   --list: color-mix(in srgb, #000 3%, var(--bg));
@@ -47,6 +53,7 @@
 :root[data-theme="dark"] {
   --bg: #16181c; --fg: #dfe2e6; --dim: #8b9098; --line: #2c3038;
   --head: #1e2126; --sel: #3d7ddb; --selfg: #fff; --hit: #4a4526;
+  --note: #56c4d8; --warn: #e3a04a; --err: #ff7070;
   --list: var(--bg);
   --huel: .26; --huelh: .32; --huec: min(c * 2, .12); --hueink: 0%;
   color-scheme: dark;
@@ -55,6 +62,7 @@
   :root:not([data-theme="light"]) {
     --bg: #16181c; --fg: #dfe2e6; --dim: #8b9098; --line: #2c3038;
     --head: #1e2126; --sel: #3d7ddb; --selfg: #fff; --hit: #4a4526;
+    --note: #56c4d8; --warn: #e3a04a; --err: #ff7070;
     --list: var(--bg);
     --huel: .26; --huelh: .32; --huec: min(c * 2, .12); --hueink: 0%;
     color-scheme: dark;
@@ -199,12 +207,13 @@ button {
    are: #filehead is a sticky header row (like #cols) and #filecanvas is the
    scrolled surface, populated with a small pool of recycled .caprow divs
    positioned by `top` - see fileSlot()/filesDraw() in app.js. */
-/* rescoping --row - see the :root comment - lets .caprow (a var(--row) consumer)
-   grow with it; must match CROW in app.js, this being the one list app.js does not
-   measure, its rows never moving.
+/* The capture list's rows are the packet list's: both on the :root --row, which the
+   narrow layout doubles for either where the row folds in two - on #files below as
+   it does on #viewer. app.js reads it back off #files rather than keeping a copy -
+   see filesDraw().
    #filehead sits on --headrow instead, so the header bar's height doesn't ride
    along with it - see the :root comment. */
-#files { --row: 26px; display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
+#files { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
 #filelist {
   position: relative; flex: 1; min-height: 0;
   overflow: auto; contain: layout paint; border-bottom: 1px solid var(--line);
@@ -254,7 +263,7 @@ button {
    to say about the capture on the line under it. The row is also a tap target
    now rather than the name alone, which is what the doubled height is for. */
 @media (max-width: 1100px) {
-  #files { --row: 52px; }        /* two of the wide list's rows, as #viewer's is */
+  #files { --row: 56px; }        /* two of the wide list's rows, as #viewer's is */
   /* nothing left to head: a size, a date and a list of protocol names each say
      what they are, and one header line cannot label two rows of cells anyway */
   #filehead { display: none; }
@@ -362,31 +371,14 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
   #viewer:not(.flow) .row > span:last-child { grid-column: 2 / -1; color: var(--dim); }
   #viewer:not(.flow) .row.sel > span:last-child { color: inherit; }
 
-  /* A frame picked on a screen this size means the dissection is what was wanted,
-     and the rows above it have done their job: either view collapses to the one
-     row being dissected, held at the top, and the tree opens out under it into
-     everything that is left. The scrollport is that row exactly, so nothing can
-     be scrolled away from it downwards; app.js puts it there, in reveal(). The
-     way back is the row itself: clicking the selected row deselects, and the
-     :not(.picked) rule above hands the window back, this row at the top of it.
-
-     Both views keep their header over the row. The diagram's columns are its
-     addresses, and an arrow between two unnamed lifelines says nothing; the
-     list's are what the halves of a folded row are, which one row out of its
-     list needs saying about it more than a screenful did, not less. So the row
-     lands at scrollTop = i * --row, which puts it directly under that sticky
-     header in either view.
-     Sideways it still scrolls, and has to: the diagram is far wider than a screen
-     this size, and so is the list once it is narrower than its own columns.
-     max-height as well as height because the splitter is the browser's own resize
-     handle, which writes an inline height - and a list dragged taller while the
-     window was wide has to collapse anyway once it narrows. */
-  #viewer { --strip: calc(var(--headrow) + var(--row) + 1px); }   /* the titles, the
-    row, and the border the list draws under itself */
-  #viewer.picked > #list {
-    height: var(--strip); max-height: var(--strip);
-    overflow-x: auto; overflow-y: hidden; resize: none;
-  }
+  /* A frame picked here does not take the list with it. The panes stack under it
+     at this width rather than sitting beside it (further down this file), so the
+     window is already being split the long way, and a screen this tall has the
+     height for both halves: the list keeps its own - 45%, or wherever the
+     splitter was left - and the frame picked out of it is still read against the
+     rows around it, which is what a list is for. The phone is where that stops
+     being true and the rows give way to the tree; the rule that does it lives
+     there, in the block below. */
 }
 
 /* ------------------------------------------------------------------ a phone */
@@ -418,10 +410,44 @@ body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
    dropped into a track that was not meant for it; the wide layout still has it.
 
    Everything the narrow layout above decided still holds here - the doubled row,
-   its two grid rows, the dimmed second line, the collapse to a single row once a
-   frame is picked - this being a width inside that one. */
+   its two grid rows, the dimmed second line - this being a width inside that one.
+   What this width adds to it is the collapse to a single row once a frame is
+   picked, which the narrow layout leaves alone. */
 @media (max-width: 660px) {
   #viewer { --phone: 1; }
+
+  /* A frame picked on a screen this size means the dissection is what was wanted,
+     and the rows above it have done their job: either view collapses to the one
+     row being dissected, held at the top, and the tree opens out under it into
+     everything that is left. The scrollport is that row exactly, so nothing can
+     be scrolled away from it downwards; app.js puts it there, in reveal(). The
+     way back is the row itself: clicking the selected row deselects, and the
+     :not(.picked) rule further up hands the window back, this row at the top of it.
+
+     Here and no wider. The narrow layout above splits the window between the list
+     and the panes and leaves it split, which a screen with the height for both
+     halves can afford; a phone's half is half a dozen folded rows over a tree
+     with nothing to open out into. One of the two has to have the window, and
+     once a frame is picked it is the tree.
+
+     What the row lands under is not the same in the two views, which is what the
+     two --strips below are. The diagram keeps its header over the row - its
+     columns are its addresses, and an arrow between two unnamed lifelines says
+     nothing - while the list has no header left at this width (just below), so
+     its strip is the row and the border under it and nothing else. Either way the
+     row lands at scrollTop = i * --row, which is the top of the scrollport where
+     there is no band over it and directly under the band where there is.
+     Sideways it still scrolls, and has to: the diagram is far wider than a screen
+     this size, and so is the list once it is narrower than its own columns.
+     max-height as well as height because the splitter is the browser's own resize
+     handle, which writes an inline height - and a list dragged taller while the
+     window was wide has to collapse anyway once it narrows. */
+  #viewer { --strip: calc(var(--headrow) + var(--row) + 1px); }   /* the titles, the
+    row, and the border the list draws under itself */
+  #viewer.picked > #list {
+    height: var(--strip); max-height: var(--strip);
+    overflow-x: auto; overflow-y: hidden; resize: none;
+  }
 
   /* Nothing left to head: a frame number, a timestamp, an a → b, a protocol name
      and an Info string each say what they are, and one header line cannot label
@@ -655,6 +681,30 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
   }
 }
 
+/* --------------------------------------------------------- expert items */
+
+/* A frame Wireshark has something to say about wears the severity of the worst of
+   it down the left edge of its row, in either view - see expert() in app.js.
+
+   A box of its own rather than a border or an inset shadow: the list's row is a
+   grid and the diagram's is a flex box, and only an absolutely positioned box is
+   out of the flow of both - a border would move every column over by 3px in one
+   view and shrink the diagram by 3px in the other. It also has to come out over
+   the diagram's pinned gutter columns, which paint the row's own background over
+   whatever the row itself drew (see #viewer.flow .num), hence the z-index; the
+   list has nothing stacked over its rows and does not care.
+
+   Over a coloring rule's background as much as over the list's own. The two say
+   different things - what protocol this is, and that something about it is wrong -
+   and a frame is quite often both. */
+.row[data-sev]::before, .frow[data-sev]::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  z-index: 2; background: var(--sev);
+}
+.row[data-sev="Note"],    .frow[data-sev="Note"]    { --sev: var(--note); }
+.row[data-sev="Warning"], .frow[data-sev="Warning"] { --sev: var(--warn); }
+.row[data-sev="Error"],   .frow[data-sev="Error"]   { --sev: var(--err); }
+
 /* ------------------------------------------------------ detail and bytes */
 
 #panes { display: flex; flex: 1; min-height: 0; }
@@ -700,8 +750,12 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
 .n.sel > .l { background: var(--sel); color: var(--selfg); }
 .n .t { display: inline-block; width: 16px; font-size: 15px; color: var(--dim); cursor: pointer; }
 .n .g { font-style: italic; }                        /* generated by a dissector */
-.n .warn { color: #c60; }
-.n .err { color: #d33; }
+/* the expert severity Wireshark carried up to this node, in the colour the list
+   marks the same three with */
+.n [data-sev="Note"]    { color: var(--note); }
+.n [data-sev="Warning"] { color: var(--warn); }
+.n [data-sev="Error"]   { color: var(--err); }
+.n.sel [data-sev] { color: inherit; }   /* ...but not against the sel background */
 .kids { padding-left: 14px; }
 
 #sources { display: flex; gap: 4px; padding: 0 6px 4px; }

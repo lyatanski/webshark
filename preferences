@@ -4,7 +4,7 @@
 # The only reason the file exists: the columns. sharkd will not add one on request
 # - `frames` takes no column list, and `setconf gui.column.format` after startup
 # renames the columns without changing what they hold - so every column the UI can
-# ever want has to be a column from the very start. Two things want one:
+# ever want has to be a column from the very start. Four things want one:
 #
 # - Source and Destination carry addresses but not ports, and both the packet list
 #   and the sequence-diagram view want them, as Wireshark's own flow graph labels
@@ -12,16 +12,45 @@
 #   so the packet list shows address and port together; the flow view reads the same
 #   columns out of the rows it already has.
 #
+# - The outer end of a tunnelled frame. Source and Destination hold the
+#   *innermost* address the frame has, which inside GTP-U is the UE's own - a leg
+#   this capture never carried as a packet of its own, while the hop it did carry
+#   is the outer one. So four more hidden columns hold the outer address and port
+#   of each end, and app.js draws those instead wherever they differ; see cell()
+#   there. A custom column's occurrence 1 is the first of that field in the frame,
+#   and the first is the outermost - which is the whole trick.
+#
+#   The field list is `ip.src or ipv6.src` because either family can carry the
+#   tunnel, and occurrence 1 is taken once per field - so a tunnel that changes
+#   family fills the column with both, inner and outer in the order the list names
+#   them. Which is still enough: the innermost is what the plain column already
+#   holds, so the other of the two is the outer one whichever way round it came.
+#   A frame with no IP at all leaves these blank and keeps the plain column - a
+#   MAC, a resolved name - as it was.
+#
 # - The settings drawer offers the Time column in three shapes, and a shape is a
 #   column format - so all three are here, and the drawer picks which one the list
 #   draws in the Time slot. Delta and UTC are marked hidden below: sharkd still
 #   sends their values with every row, and reports them as `visible: false`, which
 #   is what keeps them out of the list until they are asked for.
 #
+# - Expert info, which is Wireshark's own judgement on a frame: a checksum that
+#   does not add up, a retransmission, an AVP no dictionary has. It is in the
+#   dissection tree already - and the tree is one frame at a time, while the list
+#   is where the frame worth opening has to be spotted. So the severity of every
+#   expert item on a frame and the summary of each are two more hidden columns,
+#   and the row wears the worst of them down its left edge. See expert() in
+#   app.js. Occurrence 0 is every item on the frame rather than the first, which
+#   is what makes the worst of them findable at all.
+#
 # Everything else below is Wireshark's default column set, unchanged.
 
-# the two alternative Time columns, by format string - see the note above
-gui.column.hidden: %Gt,%Yut
+# The two alternative Time columns, the two expert ones and the four outer ones,
+# by format string - see the note above. A custom column is written here as it is
+# written in the format list below, display suffix and all; sharkd reports it back
+# without that suffix - `%Cus:_ws.expert.severity:0` - which is the spelling app.js
+# looks for.
+gui.column.hidden: %Gt,%Yut,%Cus:_ws.expert.severity:0:R,%Cus:_ws.expert.message:0:R,%Cus:ip.src or ipv6.src:1,%Cus:udp.srcport or tcp.srcport or sctp.srcport:1,%Cus:ip.dst or ipv6.dst:1,%Cus:udp.dstport or tcp.dstport or sctp.dstport:1
 
 gui.column.format:
 	"No.", "%m",
@@ -34,7 +63,13 @@ gui.column.format:
 	"DstPort", "%uD",
 	"Protocol", "%p",
 	"Length", "%L",
-	"Info", "%i"
+	"Info", "%i",
+	"Expert", "%Cus:_ws.expert.severity:0:R",
+	"Expert info", "%Cus:_ws.expert.message:0:R",
+	"OuterSrc", "%Cus:ip.src or ipv6.src:1",
+	"OuterSrcPort", "%Cus:udp.srcport or tcp.srcport or sctp.srcport:1",
+	"OuterDst", "%Cus:ip.dst or ipv6.dst:1",
+	"OuterDstPort", "%Cus:udp.dstport or tcp.dstport or sctp.dstport:1"
 
 # ESP, because Gm is protected with it: 3GPP runs IPsec ESP in transport mode
 # between the UE and the P-CSCF (TS 33.203), so every SIP message after the
@@ -66,3 +101,4 @@ gui.column.format:
 esp.enable_null_encryption_decode_heuristic: TRUE
 esp.enable_encryption_decode: TRUE
 esp.enable_authentication_check: TRUE
+esp.do_esp_sequence_analysis: FALSE

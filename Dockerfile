@@ -7,6 +7,8 @@
 # interpreted and just gets copied; the C one is compiled against this Wireshark,
 # so it goes into the source tree below before cmake sees it.
 #
+# plugins/ims_check.lua is disabled for now.
+#
 # Wireshark tracks master, rebuilt on a schedule by CI to pick up upstream
 # changes. To pin it instead:
 #
@@ -83,14 +85,16 @@ RUN apk add --no-cache \
 
 COPY --from=sharkd /out/usr/local /usr/local
 COPY --from=api /webshark /usr/bin/
-# The Lua plugins by copy, and the ESP plugin built above by link. Binary plugins
-# are looked for in a subdirectory of the plugin directory named for the Wireshark
+# ims.lua by copy, and the ESP plugin built above by link. Binary plugins are
+# looked for in a subdirectory of the plugin directory named for the Wireshark
 # version, and WIRESHARK_PLUGIN_DIR below replaces the compiled-in plugin path
-# rather than adding to it - so the installed one is linked in under whatever that
-# version turned out to be, and /plugins stays the single directory that holds
-# everything. Mounting a tree over all of /plugins hides the link with it; mount
-# over /plugins/ims.lua instead.
-COPY plugins/*.lua /plugins/
+# rather than adding to it - so the installed one is linked in under whatever
+# that version turned out to be, and /plugins stays the single directory that
+# holds everything. Mounting a tree over all of /plugins hides the link with it;
+# mount over /plugins/ims.lua instead.
+#
+# plugins/ims_check.lua is disabled for now - see the note at the top of the file.
+COPY plugins/ims.lua /plugins/
 RUN for dir in /usr/local/lib/wireshark/plugins/*/; do \
         ln -s "$dir" "/plugins/$(basename "$dir")"; \
     done

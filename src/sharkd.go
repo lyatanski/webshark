@@ -8,9 +8,9 @@ package main
 // longer than `idle`. Nothing else here is clever - a request is a line in and
 // a line out, serialized per session by a mutex.
 //
-// A capture's own ESP keys need nothing from this file: plugins/ims_esp recovers
-// them inside sharkd, during the load below, so that protected Gm traffic
-// dissects.
+// A capture's own ESP keys need nothing from this file: plugins/ims_esp would
+// recover them inside sharkd, during the load below, so that protected Gm
+// traffic dissects - disabled for now, see the Dockerfile.
 
 import (
 	"bufio"
@@ -158,11 +158,11 @@ func (p *pool) spawn(file string) (*session, error) {
 //     the user has open - the pool holds four sessions and a directory can hold
 //     any number of files.
 //
-// It pays for plugins/ims_esp all the same - the fields that plugin asks for are
-// what make any load build a dissection tree - and buys nothing with it: what a
-// protected frame carries is not part of the answer to "which protocols are in
-// this file". Bounded by `frames` above and cached by the scanner, so it is left
-// to do that rather than turned off for this one session.
+// It pays for plugins/ims.lua all the same - the fields that plugin's postdissector
+// asks for are what make any load build a dissection tree - and buys nothing
+// with it: what ims.lua adds is not part of the answer to "which protocols are
+// in this file". Bounded by `frames` above and cached by the scanner, so it is
+// left to do that rather than turned off for this one session.
 func (p *pool) hierarchy(file string, frames int) (json.RawMessage, error) {
 	s, err := p.start()
 	if err != nil {

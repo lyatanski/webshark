@@ -17,15 +17,16 @@ package main
 //	POST /api/file?f=                   upload one (raw body)
 //	POST /api/close?f=                  end that capture's sharkd
 //
-// Responses are sharkd's own JSON, forwarded without being decoded, except for
-// /api/frames: sharkd repeats every pcapng frame comment in the packet list, and
+// Responses are sharkd's own JSON, forwarded without being decoded, except one:
+// /api/frames. sharkd repeats every pcapng frame comment in the packet list, and
 // a ptcpdump capture carries ~1.4 kB of container metadata per frame, which is
 // 20x the size of the columns the list actually draws. That one is decoded and
 // trimmed to what the UI reads.
 //
 // A capture's ESP security associations are not in here at all: plugins/ims_esp
-// recovers them inside sharkd as a file is read, so protected Gm traffic
-// dissects without this server doing anything about it.
+// would recover them inside sharkd as a file is read, so protected Gm traffic
+// dissects without this server doing anything about it - disabled for now, see
+// the Dockerfile.
 
 import (
 	"embed"

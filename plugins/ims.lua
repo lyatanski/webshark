@@ -134,7 +134,8 @@ ims.fields = { F.id, F.impi, F.impu, F.ref, F.msg, F.linked, F.related }
 -- Gm and Mw are the same protocol on the same port; only the endpoints tell
 -- them apart, and only this deployment knows which those are. The default is
 -- the UENET of the compose stack, so `-o ims.ue_subnet:10.0.0.0/8` (tshark and
--- sharkd) or the preference dialog covers anything else.
+-- sharkd) or the preference dialog covers anything else. An endpoint inside a
+-- tunnel counts as one - see in_ue_subnet.
 ims.prefs.ue_subnet = Pref.string('UE subnet', '10.10.0.0/16',
     'SIP with one endpoint in this prefix is Gm, everything else Mw')
 
@@ -198,6 +199,12 @@ local USER_DATA = {
 -- of those frames is not the SAA that said so. Cleared in `reset` with the
 -- rest of the state, and declared up here because `read_user_data` fills it.
 local barred = {}
+
+-- Bumped whenever anything the widening below reads has moved: a class gaining
+-- an identity, two classes merging, an identity learnt to be barred. A frame's
+-- widened set is reusable exactly while this stands still, which after the
+-- registrations at the head of a capture it does.
+local gen = 0
 
 -- RFC 4006 Subscription-Id-Type. The IMSI is not literally an IMPI, but with no
 -- ISIM the IMPI is derived from it (23.003 s13.3) and normalizing both leaves
@@ -281,11 +288,19 @@ end
 local function normalize(raw)
     if raw == nil then return nil end
     local s = tostring(raw)
-    s = s:gsub('"', ''):gsub('^%s+', ''):gsub('%s+$', '')
-    s = s:gsub('^<', ''):gsub('>$', '')
-    s = s:gsub('^%a[%w%+%-%.]*:', '')  -- sip: sips: tel: im: pres:
-    s = s:gsub('[;%?].*$', '')         -- uri parameters and headers
-    s = s:gsub('@.*$', '')             -- @domain
+    -- Every one of these is a find before it is a cut, because a gsub allocates
+    -- a string whether or not it replaced anything and most values arrive with
+    -- nothing to strip. This function runs on every identity of every frame.
+    if s:find('"', 1, true) then s = s:gsub('"', '') end
+    if s:find('^%s') or s:find('%s$') then s = s:match('^%s*(.-)%s*$') end
+    if s:byte(1) == 60 then s = s:sub(2) end        -- <
+    if s:byte(-1) == 62 then s = s:sub(1, -2) end   -- >
+    local scheme = s:match('^%a[%w%+%-%.]*:')       -- sip: sips: tel: im: pres:
+    if scheme then s = s:sub(#scheme + 1) end
+    local param = s:find('[;%?]')                   -- uri parameters and headers
+    if param then s = s:sub(1, param - 1) end
+    local at = s:find('@', 1, true)                 -- @domain
+    if at then s = s:sub(1, at - 1) end
     -- A number is reduced to its digits. RFC 3966 s3 makes -, ., ( and ) visual
     -- separators that carry no meaning, and a Diameter UTF8String holds whatever
     -- the peer wrote into it - Subscription-Id-Data arrives spaced as readily as
@@ -300,8 +315,8 @@ local function normalize(raw)
     if s:match('^%+?[%d%s%-%.%(%)]+$') then
         s = s:gsub('[%s%-%.%(%)]', '')
     end
-    s = s:gsub('^%+', '')              -- E.164 international prefix
-    s = s:lower()
+    if s:byte(1) == 43 then s = s:sub(2) end        -- E.164 international prefix
+    if s:find('%u') then s = s:lower() end
     if s == '' then return nil end
     return s
 end
@@ -318,15 +333,17 @@ end
 -- separate is what lets a key be an IMPI and an IMPU at the same time without
 -- being listed twice as a subscriber identity.
 local function new_set()
-    return { all = {}, seen = {}, impi = {}, impu = {}, roles = {} }
+    return { all = {}, seen = {}, impi = {}, impu = {}, roles = { impi = {}, impu = {} } }
 end
 
 local function add(set, key, role)
     if key == nil then return false end
-    local tag = role .. ' ' .. key
-    local fresh = not set.roles[tag]
+    -- a table per role rather than one keyed `role .. ' ' .. key`, which was a
+    -- string built and hashed for every identity of every frame
+    local of_role = set.roles[role]
+    local fresh = not of_role[key]
     if fresh then
-        set.roles[tag] = true
+        of_role[key] = true
         set[role][#set[role] + 1] = key
     end
     push(set.all, set.seen, key)
@@ -345,6 +362,10 @@ local function read(set, role, fields)
     end
 end
 
+-- what the walk below answers with when there is nothing to walk, shared rather
+-- than allocated afresh for every frame that has neither field in it
+local NOTHING = {}
+
 -- Two Wireshark fields that belong together - an element with its text, a
 -- Subscription-Id-Type with its Data - arrive as two flat lists with nothing
 -- linking them. Both were added in wire order out of the same tvb, so sorting
@@ -359,6 +380,11 @@ end
 -- items each precede the other. Ranking names before values and falling back to
 -- the order they were read in makes it a total order, so there is no such pair.
 local function by_offset(names, values)
+    -- Neither field is in this frame, which is the usual answer: no Diameter
+    -- message carries both a Subscription-Id and a User-Data document, and most
+    -- carry neither. Two extractor calls to find that out are cheaper than the
+    -- two tables and the sort below.
+    if names() == nil and values() == nil then return NOTHING end
     local items = {}
     for _, fi in ipairs { names() } do
         items[#items + 1] = { off = fi.offset, seq = #items, rank = 0, name = tostring(fi.value) }
@@ -405,7 +431,10 @@ local function read_user_data(set)
             barring = flag == '1' or flag == 'true'
         elseif current then
             local key = normalize(item.value)
-            if key and barring and current == 'impu' then barred[key] = true end
+            if key and barring and current == 'impu' and not barred[key] then
+                barred[key] = true
+                gen = gen + 1
+            end
             add(set, key, current)
         end
     end
@@ -427,6 +456,10 @@ end
 
 -- ------------------------------------------------------------------ state ---
 
+-- What a frame said when it turned out to say nothing, which is a different
+-- thing from not having been looked at - see the dissector.
+local NONE = {}
+
 -- Per-frame results, so a filter, a click in webshark and a second pass all
 -- agree on what a frame said (see the dissector for what is and is not cached).
 -- Session-Id -> identity set is the request state the answers are stitched
@@ -445,9 +478,15 @@ local function parse_subnet(pref)
         tonumber(bits)
 end
 
+-- the size of the prefix's host part, which is the same for every address
+-- compared against it and so is worked out with the prefix rather than per frame
+local ue_block
+
 local function reset()
     cache, by_session, class_of, barred = {}, {}, {}, {}
     ue_net, ue_bits = parse_subnet(ims.prefs.ue_subnet)
+    ue_block = ue_bits and 2 ^ (32 - ue_bits) or nil
+    gen = gen + 1
 end
 
 -- Wireshark runs the init routine once per capture file, which is what stops
@@ -459,16 +498,28 @@ ims.init = reset
 -- it; everything is recomputed on the redissection this callback triggers
 ims.prefs_changed = reset
 
+-- Every address the frame carries and not just the first, because a Gm leg is
+-- often tunnelled: SIP between the UE and the P-CSCF crosses N3/S1-U inside
+-- GTP-U, and there the UE's own address is in the inner header while the outer
+-- one is the tunnel's, between two nodes no subnet of subscribers holds. A field
+-- called on its own answers with the first of its occurrences, which is the
+-- outer - so the whole of the frame is read instead, and an end in the subnet at
+-- any layer of it is the UE's end.
 local function in_ue_subnet(field)
     if not ue_net then return false end
-    local fi = field()
-    if not fi then return false end
-    local addr = select(1, parse_subnet(tostring(fi.value) .. '/32'))
-    if not addr then return false end
-    -- integer division by the host-part size compares the prefixes without
-    -- needing bitwise operators, which Lua 5.1 does not have
-    local block = 2 ^ (32 - ue_bits)
-    return math.floor(addr / block) == math.floor(ue_net / block)
+    for _, fi in ipairs({ field() }) do
+        local a, b, c, d = tostring(fi.value):match('^(%d+)%.(%d+)%.(%d+)%.(%d+)$')
+        if a then
+            local addr = ((tonumber(a) * 256 + tonumber(b)) * 256 + tonumber(c)) * 256 +
+                tonumber(d)
+            -- integer division by the host-part size compares the prefixes without
+            -- needing bitwise operators, which Lua 5.1 does not have
+            if math.floor(addr / ue_block) == math.floor(ue_net / ue_block) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 -- ------------------------------------------------------------ subscribers ---
@@ -480,7 +531,7 @@ end
 -- already holding any of them are absorbed into one, which is how the IMPI of
 -- a REGISTER and the MSISDN IMPU of the SAA that follows it end up together.
 local function unite(observed)
-    local target
+    local target, moved
     for _, role in ipairs(ROLES) do
         for _, key in ipairs(observed[role]) do
             local cls = class_of[key]
@@ -488,6 +539,7 @@ local function unite(observed)
                 if not target then
                     target = cls
                 else
+                    moved = true
                     for _, r in ipairs(ROLES) do
                         for _, k in ipairs(cls[r]) do
                             add(target, k, r)
@@ -498,13 +550,20 @@ local function unite(observed)
             end
         end
     end
-    target = target or new_set()
+    if not target then target, moved = new_set(), true end
     for _, role in ipairs(ROLES) do
         for _, key in ipairs(observed[role]) do
-            add(target, key, role)
-            class_of[key] = target
+            if add(target, key, role) then moved = true end
+            if class_of[key] ~= target then
+                class_of[key] = target
+                moved = true
+            end
         end
     end
+    -- The hundredth REGISTER of a subscriber already bound binds nothing, and
+    -- every frame's widened set stays as good as it was. Saying so is what keeps
+    -- `gen` still over the long tail of a capture.
+    if moved then gen = gen + 1 end
 end
 
 -- A key refused the public role is still a key: it is what the REGISTER
@@ -576,8 +635,10 @@ end
 local function truthy(v) return v == true or v == 1 end
 
 local function diameter_frame()
+    -- asked first and singly: `{ dia.cmd() }` is a table built for every frame
+    -- in the capture, and all but a few of them have no Diameter in them at all
+    if dia.cmd() == nil then return nil end
     local codes = { dia.cmd() }
-    if #codes == 0 then return nil end
 
     local apps, requests = { dia.app() }, { dia.request() }
     local entry = { observed = new_set(), msgs = {} }
@@ -633,8 +694,8 @@ local function diameter_frame()
 end
 
 local function sip_frame()
+    if sip.method() == nil and sip.status() == nil then return nil end
     local methods, statuses = { sip.method() }, { sip.status() }
-    if #methods == 0 and #statuses == 0 then return nil end
 
     local entry = { observed = new_set(), msgs = {} }
     entry.ref = (in_ue_subnet(ip.src) or in_ue_subnet(ip.dst)) and 'Gm' or 'Mw'
@@ -688,8 +749,13 @@ local function media_frame()
             -- Mb of 23.002. Its access and core legs are not named apart the
             -- way Gm and Mw are, so both come out as Mb.
             local entry = { observed = new_set(), msgs = { m.name }, ref = 'Mb' }
+            -- The setup frame can be in the cache as NONE: a stream may be set
+            -- up by something that is neither SIP nor Diameter - a SAP
+            -- announcement, say - and such a frame says nothing this plugin
+            -- reads. It is as unknown to us as one never dissected, and gets the
+            -- same partial answer.
             local setup = cache[fi.value]
-            if setup then
+            if setup and setup ~= NONE then
                 for _, role in ipairs(ROLES) do
                     for _, key in ipairs(setup.observed[role]) do
                         add(entry.observed, key, role)
@@ -718,45 +784,108 @@ local function add_id(st, field, id)
     end
 end
 
+-- Most passes over a capture are not reading any of this: the load, the columns
+-- of a packet list, a filter about TCP. A display filter primes the fields it
+-- names, so `referenced` is true on exactly the passes whose answer depends on
+-- this plugin, and a tree built to be shown wants everything and says so with
+-- `visible`. tshark's single pass primes the same way, so -Y ims.id is answered
+-- there as it is here.
+--
+-- Which of the fields is worth keeping too: a filter on `ims.msg` or `ims.ref`
+-- is answered out of the frame itself and never needs the identities, which are
+-- the expensive half of the work below.
+local W = {}
+local handle   -- ...and `ims` alone, which names the protocol rather than a field
+
+local function wanted(tree)
+    local vis = tree.visible
+    W.vis     = vis
+    W.id      = vis or tree:referenced(F.id)
+    W.impi    = vis or tree:referenced(F.impi)
+    W.impu    = vis or tree:referenced(F.impu)
+    W.ref     = vis or tree:referenced(F.ref)
+    W.msg     = vis or tree:referenced(F.msg)
+    W.linked  = vis or tree:referenced(F.linked)
+    W.related = vis or tree:referenced(F.related)
+    if W.id or W.impi or W.impu or W.ref or W.msg or W.linked or W.related then
+        return true
+    end
+    -- `ims` on its own: whether the frame is one of ours is the whole question,
+    -- and the protocol item below is the whole answer
+    if handle == nil then handle = Dissector.get('ims') or false end
+    return handle and tree:referenced(handle) or false
+end
+
 function ims.dissector(tvb, pinfo, tree)
-    -- Only hits are cached, never misses. sharkd dissects the whole file once
-    -- when it opens it, and on that pass none of the fields read below are
-    -- primed - every extractor returns nil - so a cached "nothing here" would
-    -- stick for the rest of the session and every filter would come back empty.
-    -- Re-running a frame that yielded nothing costs one nil extractor call.
+    if not wanted(tree) then return end
+
+    -- Two things are cached per frame, and the gate above is what makes the
+    -- first of them safe.
     --
-    -- What is cached is what the frame itself said, which cannot change. The
-    -- widening in `relate` is not cached and is redone every time, because the
-    -- classes it reads keep growing: the SAA that ties an IMPI to an MSISDN
-    -- comes hundreds of frames after the REGISTER, and caching the widened set
-    -- would leave those early frames permanently short of it.
+    -- What the frame itself said, hit or miss. A miss used to be re-read every
+    -- time: sharkd dissects the whole file when it opens it, and on that pass
+    -- none of the fields read below are primed - every extractor returns nil -
+    -- so a "nothing here" cached from it would stick for the rest of the session
+    -- and every filter would come back empty. That pass is now turned away at
+    -- the door, so reaching this line means the fields are primed and an empty
+    -- read is the frame's own answer rather than an artefact of the pass.
+    --
+    -- And the widening, which is not the frame's own answer: it is read through
+    -- classes that keep growing, and the SAA that ties an IMPI to an MSISDN
+    -- comes hundreds of frames after the REGISTER it belongs to. `gen` is when
+    -- that last moved, so the set is reused only while everything it was built
+    -- from has stood still - which, once a capture's registrations are behind
+    -- it, is the whole of the rest of the file.
+    --
     -- A media frame is the one entry that can be incomplete rather than absent,
     -- because it is assembled out of another frame's: on a lone click the setup
     -- frame may not have been dissected in this session at all, and caching the
-    -- stream without its subscribers would be the same permanent miss. A filter
-    -- pass dissects in frame order, so the SDP is read before the media it set
-    -- up and one pass is enough.
+    -- stream without its subscribers would be the permanent miss the first
+    -- paragraph is about. A filter pass dissects in frame order, so the SDP is
+    -- read before the media it set up and one pass is enough.
     local entry = cache[pinfo.number]
-    if not entry then
+    if entry == nil then
         entry = diameter_frame() or sip_frame() or media_frame()
-        if not entry then return end
+        if not entry then
+            cache[pinfo.number] = NONE
+            return
+        end
         if not entry.partial then cache[pinfo.number] = entry end
+    elseif entry == NONE then
+        return
     end
 
-    local ids, related = relate(entry.observed)
+    local ids, related
+    if W.id or W.impi or W.impu or W.related then
+        ids, related = entry.ids, entry.related
+        if ids == nil or entry.gen ~= gen then
+            ids, related = relate(entry.observed)
+            entry.ids, entry.related, entry.gen = ids, related, gen
+        end
+    end
 
     local st = tree:add(ims, tvb(0, 0))
-    st:set_text(string.format('IMS: %s%s', table.concat(entry.msgs, ' '),
-        ids.all[1] and (' ' .. table.concat(ids.all, ' ')) or ''))
-    st:set_generated()
+    if W.vis then
+        st:set_text(string.format('IMS: %s%s', table.concat(entry.msgs, ' '),
+            ids.all[1] and (' ' .. table.concat(ids.all, ' ')) or ''))
+        st:set_generated()
+    end
 
-    if entry.ref then st:add(F.ref, entry.ref) end
-    for _, msg in ipairs(entry.msgs) do st:add(F.msg, msg) end
-    for _, id in ipairs(ids.impi) do add_id(st, F.impi, id) end
-    for _, id in ipairs(ids.impu) do add_id(st, F.impu, id) end
-    for _, id in ipairs(ids.all) do add_id(st, F.id, id) end
-    if entry.linked then st:add(F.linked, true) end
-    if related then st:add(F.related, true) end
+    if W.ref and entry.ref then st:add(F.ref, entry.ref) end
+    if W.msg then
+        for _, msg in ipairs(entry.msgs) do st:add(F.msg, msg) end
+    end
+    if W.impi then
+        for _, id in ipairs(ids.impi) do add_id(st, F.impi, id) end
+    end
+    if W.impu then
+        for _, id in ipairs(ids.impu) do add_id(st, F.impu, id) end
+    end
+    if W.id then
+        for _, id in ipairs(ids.all) do add_id(st, F.id, id) end
+    end
+    if W.linked and entry.linked then st:add(F.linked, true) end
+    if W.related and related then st:add(F.related, true) end
 end
 
 register_postdissector(ims)

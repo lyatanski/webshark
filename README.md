@@ -6,18 +6,25 @@ the dissecting — point it at a directory of captures and read them from a
 browser, with no client to install.
 
 - **Packet list** — paged and virtualised, so a 600 MB capture opens as fast as a
-  small one; Wireshark's own columns and coloring rules.
+  small one; Wireshark's own columns and coloring rules, with a frame the
+  dissectors complained about coloured for that rather than for its protocol, and
+  a mark down its edge saying how loudly.
 - **Flow view** — Wireshark's flow graph: a lane per address, an arrow per frame,
   lanes draggable into the order you want to read them in.
+- **Tunnels read from the outside** — a GTP-U frame is drawn at the hop the
+  capture carried it on, not at the address inside it; the tunnelled pair is the
+  cell's tooltip.
 - **Dissection tree and bytes** — the full protocol tree, hex with the selected
   field highlighted, one tab per data source.
 - **Display filters** — compiled by sharkd as you type, with field-name
-  completion.
+  completion; a bare value gets its quotes put in where the field it is compared
+  against holds a string, so `ims.id == 001010000000001` is a filter and not an
+  octal number.
 - **Captures list** — sizes, capture times and a protocol summary per file;
   upload by drag-and-drop, download, close.
 - **IMS extras** — a Lua plugin relating SIP, Diameter and the RTP they set up
-  by subscriber identity, and a C plugin recovering ESP SAs from a capture's own
-  AKA registration, so protected Gm traffic dissects with nothing configured.
+  by subscriber identity. A C plugin recovering ESP SAs from a capture's own
+  AKA registration also lives in this repo, but is disabled for now.
 
 ## Run
 
@@ -43,12 +50,8 @@ Configuration is environment variables, all with the defaults shown:
 ## Build
 
 `docker build .` builds sharkd from Wireshark master with Lua and plugins
-enabled, `plugins/ims_esp` against it, and the server around both;
-`--build-arg WIRESHARK=v4.6.7` pins a release instead. CI rebuilds and pushes
-the image on every push.
-
-The plugin is built in its own layer after Wireshark, so editing it costs one
-compile and a link rather than another hour.
+enabled, and the server around it; `--build-arg WIRESHARK=v4.6.7` pins a
+release instead. CI rebuilds and pushes the image on every push.
 
 ## Layout
 
@@ -60,8 +63,10 @@ src/web/         the UI - no framework, no build step: app.js is what the browse
 plugins/ims.lua  SIP ↔ Diameter ↔ RTP correlation by subscriber identity
 plugins/ims_esp/ ESP SAs from a capture's own SIP registration, in C: a
                  postdissector that installs them as the file is read, so sharkd,
-                 tshark and Wireshark alike need telling nothing
-preferences      hidden port columns the flow view labels arrows with, plus ESP settings
+                 tshark and Wireshark alike need telling nothing - disabled for
+                 now, see the Dockerfile
+preferences      the hidden columns the UI reads back - ports, the outer end of a
+                 tunnel, expert info - plus ESP settings
 colorfilters     coloring rules
 ```
 

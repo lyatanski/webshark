@@ -16,9 +16,9 @@
 // layout doubles - so it is measured off the element rather than kept here as a
 // second copy of a number that moves on its own.
 let ROW = 28       // ...until measure() reads the real one, which it does before any paint
-// the capture list's own row: --row as #files rescopes it, doubled again by the
+// the capture list's row, which is the packet list's: the same --row, doubled by the
 // narrow layout, so it is read back off the element as the packet list's is
-let CROW = 26
+let CROW = 28
 const PAGE = 200   // frames per /api/frames call
 const OVER = 8     // rows drawn above and below the viewport
 // fixed widths for the columns Wireshark keeps narrow, the rest to the last one -
@@ -195,10 +195,12 @@ function measure() {
   return true
 }
 
-// ...and at that width a picked frame leaves either view a header and one row,
-// holding the row being dissected while the tree has the rest of the window.
-// Nothing scrolls to that row: it is put at the top and kept there.
-const pinned = () => NARROW && $('#viewer').classList.contains('picked')
+// ...and on a phone a picked frame leaves either view one row - the diagram's
+// header over it, the list's gone by then - holding the row being dissected while
+// the tree has the rest of the window. Nothing scrolls to that row: it is put at
+// the top and kept there. The narrow band between the two widths keeps its list:
+// the panes stack there too, but there is height enough for both of them.
+const pinned = () => PHONE && $('#viewer').classList.contains('picked')
 
 // The list lays its columns out in a grid, the flow view as spans over its gutter;
 // these carry the two the views share so .num/.ft can size off the same numbers.
@@ -251,6 +253,8 @@ function fillPair(el, row) {
   arrow.textContent = row ? ' → ' : ''
   da.textContent = dst
   dp.textContent = dport ? ':' + dport : ''
+  // ...and the addresses the tunnel holds, which the outer pair above replaced
+  el.title = row ? inner(row) : ''
 }
 
 // ------------------------------------------------------------- packet list ---
@@ -346,6 +350,7 @@ function draw() {
     el.classList.toggle('sel', i === S.selIdx)
     el.classList.toggle('gap', !row)
     hue(el, row, i === S.selIdx)
+    expert(el, row)
     if (flowing()) arrow(el, row)
     else {
       const cells = el.children
@@ -466,6 +471,16 @@ function columns(st) {
     proto: at('%p', 'Protocol'), info: at('%i', 'Info'),
     // the other two the phone layout has a place for; nothing else reads these
     no: at('%m', 'No.'), len: at('%L', 'Length'),
+    // ...and the expert pair, hidden like the Time alternatives and read the
+    // same way, out of the row rather than off the list - see expert()
+    sev: at('%Cus:_ws.expert.severity:0', 'Expert'),
+    xinfo: at('%Cus:_ws.expert.message:0', 'Expert info'),
+    // ...and the outer end of each address and port, four more hidden ones - which
+    // is what the four above turn into wherever a frame is tunnelled, see cell()
+    osrc: at('%Cus:ip.src or ipv6.src:1', 'OuterSrc'),
+    osport: at('%Cus:udp.srcport or tcp.srcport or sctp.srcport:1', 'OuterSrcPort'),
+    odst: at('%Cus:ip.dst or ipv6.dst:1', 'OuterDst'),
+    odport: at('%Cus:udp.dstport or tcp.dstport or sctp.dstport:1', 'OuterDstPort'),
   }
   // with no addresses to put in columns there is no diagram to offer
   $('#mode').hidden = S.ix.src < 0 || S.ix.dst < 0
@@ -496,7 +511,43 @@ function columns(st) {
 // name it is found under
 const CLS = { no: 'num', time: 'time', proto: 'proto', len: 'len', info: 'info' }
 
-const cell = (row, name) => (S.ix[name] >= 0 ? row.c[S.ix[name]] : '') || ''
+const raw = (row, name) => (S.ix[name] >= 0 ? row.c[S.ix[name]] : '') || ''
+
+// the hidden column holding the outer end of each of the four the views draw
+const OUTER = { src: 'osrc', dst: 'odst', sport: 'osport', dport: 'odport' }
+
+// An address or a port of a row - the outer one where the frame has two.
+//
+// Wireshark's Source and Destination hold the innermost address a frame has, so a
+// GTP-U frame reads as the UE's own address and the SIP port inside it. That is a
+// leg the capture never carried: what it did carry is the tunnel, between two
+// nodes that are nowhere in the row. Both views are about the hops of the capture
+// - the diagram draws a lifeline per address and puts every frame on the one it
+// travelled - so the outer end is the one they draw, and the inner pair stays as
+// the cell's tooltip (see fillPair) rather than going missing.
+//
+// The outer column is the first occurrence of each field it lists (see the
+// preferences file), which is the outermost. Two of them come back comma-joined
+// when the tunnel changed address family - v6 carrying v4, or the reverse - and
+// the one that is not what the plain column holds is the outer one either way
+// round. An untunnelled frame has the one value, equal to the plain column, and a
+// frame with no IP or no ports at all has none: both fall through to the column
+// the list has always drawn, a MAC or a resolved name included.
+const cell = (row, name) => {
+  const v = raw(row, name)
+  if (!OUTER[name]) return v
+  const out = raw(row, OUTER[name])
+  return out ? out.split(',').find(o => o !== v) || v : v
+}
+
+// The pair the frame carries inside its tunnel, for the row that draws the outer
+// one - and nothing at all for a frame that is not tunnelled.
+function inner(row) {
+  const src = raw(row, 'src'), dst = raw(row, 'dst')
+  if (src === cell(row, 'src') && dst === cell(row, 'dst')) return ''
+  const at = p => (p ? ':' + p : '')
+  return 'tunnelled: ' + src + at(raw(row, 'sport')) + ' → ' + dst + at(raw(row, 'dport'))
+}
 
 // The list's column titles. The flow view's header is the node columns, which
 // only layout() knows the geometry of.
@@ -604,6 +655,37 @@ function hue(el, row, sel) {
     el.style.setProperty('--rbg', '#' + row.bg)
     el.style.setProperty('--rfg', '#' + row.fg)
   }
+}
+
+// Wireshark's dissectors judge as they dissect - a checksum that does not add up,
+// a retransmission, a Diameter AVP no dictionary has - and file what they find as
+// expert items on the frame. Those are in the dissection tree, which is one frame
+// at a time; the list is where the frame worth opening has to be found. So a row
+// carries the severity of every item on its frame and the summary of each, as two
+// hidden columns (see the preferences file), and wears the worst of them.
+//
+// Weakest first, which is what makes the worst of them a maximum.
+const SEV = ['Comment', 'Chat', 'Note', 'Warning', 'Error']
+// ...and only from Note up. Chat is every TCP handshake and every SIP request
+// line, Comment is a note the capture was saved with, and a mark on a third of
+// the rows is a mark on nothing.
+const MARKED = SEV.indexOf('Note')
+
+function expert(el, row) {
+  // one severity per item, in the order the items are on the frame: an AVP the
+  // dictionary does not have raises two, for the code and for the vendor, and the
+  // column reads "Warning,Warning"
+  let worst = -1
+  if (row) for (const s of cell(row, 'sev').split(',')) worst = Math.max(worst, SEV.indexOf(s))
+  if (worst < MARKED) {
+    delete el.dataset.sev
+    el.removeAttribute('title')   // ...and not title = '', which leaves an empty one
+    return
+  }
+  el.dataset.sev = SEV[worst]
+  // every summary, not the worst one's: two items on a frame are two things to
+  // know about it, and the row has nowhere but this to say either
+  el.title = cell(row, 'xinfo')
 }
 
 // -------------------------------------------------------- sequence diagram ---
@@ -1038,7 +1120,8 @@ function arrow(el, row) {
   const proto = cell(row, 'proto')
   label.children[0].textContent = proto
   label.children[1].textContent = text
-  label.title = (proto ? proto + ': ' : '') + cell(row, 'info')
+  const held = inner(row)
+  label.title = (proto ? proto + ': ' : '') + cell(row, 'info') + (held ? '\n' + held : '')
 }
 
 // ------------------------------------------------------------------- detail ---
@@ -1076,8 +1159,11 @@ function build(nodes) {
     const text = document.createElement('span')
     text.textContent = n.l || ''
     if (n.g) text.classList.add('g')
-    if (n.s === 'Warning' || n.s === 'Note') text.classList.add('warn')
-    if (n.s === 'Error') text.classList.add('err')
+    // the severity of the worst expert item anywhere under this node, which
+    // Wireshark carries up the tree - so a protocol says one of its fields has
+    // something to answer for while the node is still folded. The three the list
+    // marks and no more, for the same reason - see SEV.
+    if (SEV.indexOf(n.s) >= MARKED) text.dataset.sev = n.s
     label.append(twisty, text)
     el.appendChild(label)
 
@@ -1235,8 +1321,12 @@ async function filter(text) {
   closeComplete()
   note('Filtering…')
   if (text) {
-    const check = await api('check', { f: S.file, filter: text }).catch(err => ({ ok: false, err: err.message }))
-    if (!check.ok) { $('#filter').classList.add('bad'); note(check.err); return }
+    const use = await compile(text)
+    if (!use.ok) { $('#filter').classList.add('bad'); note(use.err); return }
+    // ...and the quotes it put in are left in the box: they are the filter from
+    // here on - the URL keeps them, the next edit starts from them, and hiding a
+    // lane wraps them - so what is filtered on is never something unwritten
+    text = $('#filter').value = use.text
   }
   $('#filter').classList.remove('bad')
   S.filter = text
@@ -1293,8 +1383,89 @@ async function liveCheck() {
 }
 
 async function validate(text) {
+  const use = await compile(text)
+  if ($('#filter').value === text) $('#filter').classList.toggle('bad', !use.ok)
+}
+
+// A display filter types a bare value by how it is spelled and not by the field
+// it is compared against, so a string field with a number for a value is a filter
+// Wireshark rejects: `ims.id == 001010000000001` is an octal integer to the
+// lexer - 69793218561 - and an integer is not a string. An IMPI or an IMPU fares
+// worse: the `@` is not a character a bare value may hold at all.
+//
+// Quoting is Wireshark's own answer to both, and nothing in a plugin can change
+// that - a field says it holds a string (plugins/ims.lua does), and what a value
+// means is the filter engine's to decide - so the box puts the quotes in. It runs
+// only on a filter that does not compile as typed: one that does is sent exactly
+// as it was written, and the rewrite has to compile in its turn or it is dropped
+// and the error the filter earned is the error shown.
+async function compile(text) {
   const check = await api('check', { f: S.file, filter: text }).catch(err => ({ ok: false, err: err.message }))
-  if ($('#filter').value === text) $('#filter').classList.toggle('bad', !check.ok)
+  if (check.ok) return { ok: true, text }
+  const fixed = await requote(text)
+  if (fixed === text) return { ok: false, text, err: check.err }
+  const retry = await api('check', { f: S.file, filter: fixed }).catch(() => ({ ok: false }))
+  return retry.ok ? { ok: true, text: fixed } : { ok: false, text, err: check.err }
+}
+
+// Wireshark's lexer in miniature: quoted strings and regexes whole - a value the
+// box wrote quotes around once is not one to write them around again - then the
+// operators and the punctuation, and a bare value is everything up to the next of
+// those. A `/` is left out of a bare value on purpose: `matches /^INVITE/` is a
+// regex and not a value, and a value with a slash in it is the rarer of the two,
+// so it stays the caller's to quote.
+const PIECE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/(?:\\.|[^/\\])*\/|&&|\|\||==|!=|>=|<=|[(){}[\],<>~!=]|[^\s(){}[\],"'/&|<>~!=]+/g
+const COMPARE = new Set(['==', '!=', '>=', '<=', '>', '<', '~',
+  'eq', 'ne', 'gt', 'lt', 'ge', 'le', 'contains', 'matches', 'in'])
+const bare = t => !'"\'/(){}[],<>~!=&|'.includes(t[0])
+
+// The same filter with a quoted value wherever one is compared against a field
+// that takes a string. Spliced into the text rather than rebuilt from the pieces,
+// so the spacing and everything else is the line as it was typed.
+async function requote(text) {
+  const pieces = [...text.matchAll(PIECE)]
+  const found = []          // the bare values, with the field each is compared against
+  let field = '', many = false
+  for (let i = 0; i < pieces.length; i++) {
+    const t = pieces[i][0], op = t.toLowerCase()
+    if (COMPARE.has(op)) {
+      const left = i > 0 ? pieces[i - 1][0] : ''
+      field = bare(left) ? left : ''
+      many = op === 'in'    // `ims.id in {a, b}` is a value per member of the set
+      continue
+    }
+    if (!field) continue
+    if (many && (t === '{' || t === ',')) continue
+    if (bare(t)) found.push({ at: pieces[i], field })
+    if (!many || !bare(t)) field = ''   // anything else closes the set, `}` included
+  }
+  if (!found.length) return text
+
+  // which of those fields take a string at all: sharkd is asked, since the answer
+  // is the field's type and the types are Wireshark's own
+  const fields = [...new Set(found.map(f => f.field))]
+  const takes = new Map(await Promise.all(fields.map(async f => [f, await takesString(f)])))
+
+  let out = '', end = 0
+  for (const { at, field: f } of found) {
+    if (!takes.get(f)) continue
+    out += text.slice(end, at.index) + '"' + at[0].replace(/["\\]/g, '\\$&') + '"'
+    end = at.index + at[0].length
+  }
+  return end ? out + text.slice(end) : text
+}
+
+// Whether a field compares against a string, which is what says quoting its value
+// could help rather than hurt - `frame.number > "10"` is as rejected as an
+// unquoted identity is. Asked once and kept: a field's type outlives every filter
+// typed against it.
+const stringy = new Map()
+function takesString(field) {
+  if (!stringy.has(field)) {
+    stringy.set(field, api('check', { f: S.file, filter: field + ' == "webshark"' })
+      .then(res => !!res.ok).catch(() => false))
+  }
+  return stringy.get(field)
 }
 
 // the dotted identifier ending at the caret - "sip.st and ip" completes "ip",
