@@ -1,0 +1,380 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: packetcaptures.webshark.io
+spec:
+  group: webshark.io
+  names:
+    kind: PacketCapture
+    listKind: PacketCaptureList
+    plural: packetcaptures
+    shortNames:
+    - pcap
+    singular: packetcapture
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.selected
+      name: Targets
+      type: integer
+    - jsonPath: .status.capturing
+      name: Capturing
+      type: integer
+    - jsonPath: .status.completed
+      name: Done
+      type: integer
+    - jsonPath: .status.failed
+      name: Failed
+      type: integer
+    - jsonPath: .status.websharkURL
+      name: Webshark
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: PacketCapture is tcpdump in every pod it selects, streaming into
+          webshark.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PacketCaptureSpec selects pods and says what to capture in them. Each selected
+              pod gets one tcpdump, in a pod of the operator's own on the same node, which
+              steps into the target's network namespace and streams the pcap straight into a
+              webshark instance.
+
+              The pod being captured is not touched at all: nothing is added to it, nothing
+              is left in it, and nothing is written to the node either.
+            properties:
+              duration:
+                default: 5m
+                description: |-
+                  Duration is the longest a capture runs, rather than the only way one ends:
+                  deleting the PacketCapture or pausing it stops the captures, and so does
+                  the pod being captured going away.
+                  0 is until the target pod dies, which wants MaxPackets or a tight Filter.
+                type: string
+              fileNamePrefix:
+                description: |-
+                  FileNamePrefix goes in front of the generated capture file name. The name
+                  is <prefix><pod>-<namespace>-<date>.pcap, and webshark only accepts
+                  [A-Za-z0-9 ._+-].
+                type: string
+              filter:
+                description: |-
+                  Filter is a pcap filter, e.g. "udp port 5060 or tcp port 3868". Applied by
+                  tcpdump in the pod, so what it drops never crosses the network.
+                type: string
+              image:
+                description: |-
+                  Image runs the capture: it needs tcpdump, curl, nsenter and ip. Defaults to
+                  the operator's own image, which has all four.
+                type: string
+              imagePullPolicy:
+                description: PullPolicy describes a policy for if/when to pull a container
+                  image
+                type: string
+              interface:
+                default: any
+                description: |-
+                  Interface tcpdump listens on. "any" is every interface the pod has, which
+                  is what you want unless the pod has more than one and you know which.
+                type: string
+              maxPackets:
+                description: MaxPackets ends a capture after that many packets. 0
+                  is no limit.
+                format: int64
+                type: integer
+              maxTargets:
+                default: 10
+                description: |-
+                  MaxTargets caps how many pods one PacketCapture will ever touch - over its
+                  whole life, not per pass, because a capture goes on watching: a pod
+                  created later that matches gets a capture of its own, which is how a
+                  crashlooping pod's traffic is caught. A selector wider than intended
+                  therefore costs ten capture pods and not a hundred, and the way to stop it
+                  following a deployment around is Paused, or deleting it.
+                format: int32
+                minimum: 1
+                type: integer
+              namespaceSelector:
+                description: |-
+                  NamespaceSelector picks the namespaces to look in. Left out, only this
+                  PacketCapture's own namespace is searched; empty ({}), every namespace.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              paused:
+                description: |-
+                  Paused stops the captures: the running ones end, and no new ones start.
+                  Resuming starts fresh captures, in new files, for the pods still running -
+                  a pcap being streamed cannot be picked up where it left off.
+                type: boolean
+              podNames:
+                description: PodNames picks pods by name, and-ed with PodSelector
+                  when both are given.
+                items:
+                  type: string
+                type: array
+              podSelector:
+                description: |-
+                  PodSelector picks pods by label. Left out, every running pod in those
+                  namespaces matches - MaxTargets is what stops that being the whole cluster.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              snaplen:
+                description: Snaplen is bytes captured per packet; 0 is the whole
+                  packet.
+                format: int32
+                type: integer
+              websharkRef:
+                description: |-
+                  WebsharkRef names the Webshark the pcaps go to. Left out, the operator
+                  takes the only Webshark in this namespace, or the only one in the cluster.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                required:
+                - name
+                type: object
+              websharkURL:
+                description: |-
+                  WebsharkURL uploads somewhere else entirely - any host speaking webshark's
+                  POST /api/file?f=<name>. Wins over WebsharkRef.
+                type: string
+            type: object
+          status:
+            description: PacketCaptureStatus is one line per pod and the counts over
+              them.
+            properties:
+              capturing:
+                format: int32
+                type: integer
+              completed:
+                format: int32
+                type: integer
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failed:
+                format: int32
+                type: integer
+              observedGeneration:
+                format: int64
+                type: integer
+              selected:
+                format: int32
+                type: integer
+              targets:
+                items:
+                  description: CaptureTarget is one pod being captured, and the file
+                    it is writing.
+                  properties:
+                    capturer:
+                      description: |-
+                        Capturer is the pod running tcpdump for this target - in the operator's own
+                        namespace, on this target's node. `kubectl logs` on it is what tcpdump had
+                        to say, and deleting it stops the capture.
+                      type: string
+                    file:
+                      description: File is the capture in webshark, appearing there
+                        as it is written.
+                      type: string
+                    finishedAt:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    namespace:
+                      type: string
+                    phase:
+                      description: CapturePhase is where one pod's capture has got
+                        to.
+                      enum:
+                      - Pending
+                      - Capturing
+                      - Completed
+                      - Failed
+                      type: string
+                    pod:
+                      type: string
+                    startedAt:
+                      format: date-time
+                      type: string
+                  required:
+                  - file
+                  - namespace
+                  - phase
+                  - pod
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              websharkURL:
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

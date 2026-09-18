@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>webshark captures</title>
+<link rel=icon href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23000' d='M2.95 0C1.33 0 0 1.32 0 2.95v18.1C0 22.68 1.32 24 2.95 24h18.1c1.62 0 2.95 -1.32 2.95 -2.95V2.95C23.99976 1.32 22.68 0 21.05 0zm0 1.09h18.1c1.04 0 1.85 0.818 1.85 1.86v14h-5.27c-0.335 -0.796 -2.57 -6.47 0.283 -10.9a0.516 0.517 0 0 0 -0.443 -0.794c-5.24 0.0827 -8.2 3.19 -9.74 6.21 -1.35 2.64 -1.63 4.91 -1.69 5.53H1.09v-14c0 -1.04 0.817 -1.86 1.85 -1.86zm13.6 5.24c-2.62 5.24 0.248 11.4 0.248 11.4a0.516 0.517 0 0 0 0.469 0.301h5.62v3.05c0 1.04 -0.817 1.86 -1.85 1.86h-18.1c-1.04 0 -1.85 -0.818 -1.85 -1.86v-3.05h5.39a0.516 0.517 0 0 0 0.514 -0.477s0.226 -2.8 1.66 -5.62c1.34 -2.62 3.67 -5.17 7.91 -5.57z'/></svg>">
+<link rel=stylesheet href=style.css>
+<script>
+  // before first paint, or a stored dark theme shows a white page for a frame
+  const stored = localStorage.getItem('theme')
+  if (stored) document.documentElement.dataset.theme = stored
+</script>
+</head>
+<body>
+
+<header>
+  <span id=brand title="webshark operator"><svg viewBox="0 0 24 24" aria-hidden=true><path d='M2.95 0C1.33 0 0 1.32 0 2.95v18.1C0 22.68 1.32 24 2.95 24h18.1c1.62 0 2.95 -1.32 2.95 -2.95V2.95C23.99976 1.32 22.68 0 21.05 0zm0 1.09h18.1c1.04 0 1.85 0.818 1.85 1.86v14h-5.27c-0.335 -0.796 -2.57 -6.47 0.283 -10.9a0.516 0.517 0 0 0 -0.443 -0.794c-5.24 0.0827 -8.2 3.19 -9.74 6.21 -1.35 2.64 -1.63 4.91 -1.69 5.53H1.09v-14c0 -1.04 0.817 -1.86 1.85 -1.86zm13.6 5.24c-2.62 5.24 0.248 11.4 0.248 11.4a0.516 0.517 0 0 0 0.469 0.301h5.62v3.05c0 1.04 -0.817 1.86 -1.85 1.86h-18.1c-1.04 0 -1.85 -0.818 -1.85 -1.86v-3.05h5.39a0.516 0.517 0 0 0 0.514 -0.477s0.226 -2.8 1.66 -5.62c1.34 -2.62 3.67 -5.17 7.91 -5.57z'/></svg></span>
+  <h1>captures</h1>
+  <label for=webshark class=quiet>into</label>
+  <select id=webshark title="the webshark the pcaps stream into"></select>
+  <a id=open hidden>open</a>
+  <span class=spacer></span>
+  <button id=theme title="Light or dark">&#9680;</button>
+</header>
+
+<main>
+
+<!-- what to capture from: a namespace, an optional label selector, and the pods
+     that leaves. Ticking pods puts their names in the capture; ticking none and
+     leaving a selector set captures whatever matches, now and later. -->
+<section id=pods>
+  <div class=bar>
+    <select id=namespace></select>
+    <input id=selector placeholder="label selector, e.g. app=pcscf" spellcheck=false autocomplete=off>
+    <span id=podcount class=quiet></span>
+  </div>
+  <table>
+    <thead><tr>
+      <th class=tick><input type=checkbox id=all title="Select all"></th>
+      <th>pod</th><th>status</th><th class=node>node</th><th>capture</th>
+    </tr></thead>
+    <tbody id=podlist></tbody>
+  </table>
+</section>
+
+<!-- the capture itself. The filter is tcpdump's, applied in the pod's own
+     network namespace, so what it drops never crosses the network. -->
+<form id=start>
+  <input id=filter placeholder="pcap filter, e.g. udp port 5060 or tcp port 3868" spellcheck=false autocomplete=off>
+  <label>for <input id=duration value=5m size=4 title="the longest a capture runs; pausing or deleting it stops it sooner"></label>
+  <label>iface <input id=iface value=any size=4></label>
+  <label>snaplen <input id=snaplen value=0 size=5 title="bytes per packet; 0 is the whole packet"></label>
+  <button type=submit id=go class=go>Capture</button>
+</form>
+
+<section id=captures>
+  <h2>running and finished</h2>
+  <div id=capturelist></div>
+</section>
+
+</main>
+
+<!-- webshark itself, in the page. The operator serves it under its own origin
+     (internal/ui/proxy.go), so this is a same-origin frame and there is no
+     second address for the browser to have to be able to follow. -->
+<div id=viewer hidden>
+  <div class=bar>
+    <button id=close title="Back to the captures (Esc)">&#10005;</button>
+    <span id=viewing></span>
+    <span class=spacer></span>
+    <a id=pop target=_blank rel=noopener>in a tab &#8599;</a>
+  </div>
+  <iframe id=frame title=webshark></iframe>
+</div>
+
+<div id=toast hidden></div>
+<script src=app.js></script>
+</body>
+</html>

@@ -1,6 +1,8 @@
 package main
 
-// One sharkd per open capture, talked to over its stdio JSON-RPC.
+// One sharkd per open capture - or per set of them read as one, which is a
+// merge and no different from here on (merge.go) - talked to over its stdio
+// JSON-RPC.
 //
 // sharkd keeps the whole dissected capture in memory, so the interesting part
 // of owning the processes is *ending* them: the pool holds at most `max` of
@@ -34,6 +36,7 @@ type session struct {
 	enc  *json.Encoder
 	seq  int
 	used time.Time
+	tmp  string      // a merge this session is holding, removed when it ends
 	dead atomic.Bool // read outside the mutex, by the pool deciding to retry
 }
 
@@ -41,25 +44,27 @@ type pool struct {
 	bin, dir string
 	max      int
 	idle     time.Duration
+	merge    *merger
 
 	mu   sync.Mutex
 	live map[string]*session
 }
 
-func newPool(bin, dir string, max int, idle time.Duration) *pool {
-	p := &pool{bin: bin, dir: dir, max: max, idle: idle, live: map[string]*session{}}
+func newPool(bin, dir string, max int, idle time.Duration, merge *merger) *pool {
+	p := &pool{bin: bin, dir: dir, max: max, idle: idle, merge: merge, live: map[string]*session{}}
 	go p.reap()
 	return p
 }
 
-// call runs one JSON-RPC method against the sharkd holding `file` and returns
-// its `result` untouched, so a response can be handed to the browser without
-// being decoded and re-encoded on the way. A broken pipe - sharkd gone, killed,
-// crashed on a malformed capture - is retried once against a fresh process,
-// because the alternative is a capture that stays broken until restart.
-func (p *pool) call(file, method string, params any) (json.RawMessage, error) {
+// call runs one JSON-RPC method against the sharkd holding `ref` - one capture
+// or the merge of several - and returns its `result` untouched, so a response
+// can be handed to the browser without being decoded and re-encoded on the way.
+// A broken pipe - sharkd gone, killed, crashed on a malformed capture - is
+// retried once against a fresh process, because the alternative is a capture
+// that stays broken until restart.
+func (p *pool) call(ref, method string, params any) (json.RawMessage, error) {
 	for attempt := 0; attempt < 2; attempt++ {
-		s, err := p.acquire(file)
+		s, err := p.acquire(ref)
 		if err != nil {
 			return nil, err
 		}
@@ -70,14 +75,14 @@ func (p *pool) call(file, method string, params any) (json.RawMessage, error) {
 		if !s.dead.Load() {
 			return nil, err // sharkd answered, and the answer was an error
 		}
-		p.drop(file, s)
+		p.drop(ref, s)
 	}
-	return nil, fmt.Errorf("sharkd: %s: not answering", file)
+	return nil, fmt.Errorf("sharkd: %s: not answering", ref)
 }
 
-func (p *pool) acquire(file string) (*session, error) {
+func (p *pool) acquire(ref string) (*session, error) {
 	p.mu.Lock()
-	if s, ok := p.live[file]; ok && !s.dead.Load() {
+	if s, ok := p.live[ref]; ok && !s.dead.Load() {
 		s.used = time.Now()
 		p.mu.Unlock()
 		return s, nil
@@ -95,20 +100,20 @@ func (p *pool) acquire(file string) (*session, error) {
 	}
 	p.mu.Unlock()
 
-	s, err := p.spawn(file)
+	s, err := p.spawn(ref)
 	if err != nil {
 		return nil, err
 	}
 
 	p.mu.Lock()
-	// another request may have opened the same file while this one was loading;
+	// another request may have opened the same reference while this one loaded;
 	// keep whichever is already published and let this one go
-	if other, ok := p.live[file]; ok && !other.dead.Load() {
+	if other, ok := p.live[ref]; ok && !other.dead.Load() {
 		p.mu.Unlock()
 		go s.close()
 		return other, nil
 	}
-	p.live[file] = s
+	p.live[ref] = s
 	p.mu.Unlock()
 	return s, nil
 }
@@ -135,12 +140,25 @@ func (p *pool) start() (*session, error) {
 	return s, nil
 }
 
-func (p *pool) spawn(file string) (*session, error) {
-	s, err := p.start()
+// The file loaded here is the capture itself where the reference names one, and
+// a temp merge of them where it names several - which this session then owns, so
+// that the merge ends when the process holding it does.
+func (p *pool) spawn(ref string) (*session, error) {
+	path, tmp, err := p.merge.file(ref)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.do("load", map[string]any{"file": filepath.Join(p.dir, file)}); err != nil {
+	s, err := p.start()
+	if err != nil {
+		if tmp {
+			os.Remove(path)
+		}
+		return nil, err
+	}
+	if tmp {
+		s.tmp = path
+	}
+	if _, err := s.do("load", map[string]any{"file": path}); err != nil {
 		s.close()
 		return nil, err
 	}
@@ -176,10 +194,10 @@ func (p *pool) hierarchy(file string, frames int) (json.RawMessage, error) {
 	return s.do("tap", map[string]any{"tap0": "phs"})
 }
 
-func (p *pool) drop(file string, s *session) {
+func (p *pool) drop(ref string, s *session) {
 	p.mu.Lock()
-	if cur, ok := p.live[file]; ok && cur == s {
-		delete(p.live, file)
+	if cur, ok := p.live[ref]; ok && cur == s {
+		delete(p.live, ref)
 	}
 	p.mu.Unlock()
 	s.close()
@@ -187,24 +205,26 @@ func (p *pool) drop(file string, s *session) {
 
 // Close is only reachable from the UI's "close" button; the reaper does the
 // same thing on a timer.
-func (p *pool) closeFile(file string) {
+func (p *pool) closeFile(ref string) {
 	p.mu.Lock()
-	s, ok := p.live[file]
-	delete(p.live, file)
+	s, ok := p.live[ref]
+	delete(p.live, ref)
 	p.mu.Unlock()
 	if ok {
 		s.close()
 	}
 }
 
+// The references the pool is holding a sharkd for - one of which may name
+// several captures, which is the caller's to split (parts).
 func (p *pool) open() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	names := make([]string, 0, len(p.live))
-	for name := range p.live {
-		names = append(names, name)
+	refs := make([]string, 0, len(p.live))
+	for ref := range p.live {
+		refs = append(refs, ref)
 	}
-	return names
+	return refs
 }
 
 func (p *pool) reap() {
@@ -280,5 +300,8 @@ func (s *session) close() {
 		timer := time.AfterFunc(2*time.Second, func() { s.cmd.Process.Kill() })
 		s.cmd.Wait()
 		timer.Stop()
+		if s.tmp != "" {
+			os.Remove(s.tmp) // ...after the process reading it has gone
+		}
 	}()
 }

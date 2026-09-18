@@ -139,8 +139,13 @@ const SIDE = 2     // lanes drawn either side of the window, as OVER is rows
 
 const $ = sel => document.querySelector(sel)
 
+// Every URL webshark asks for is relative to the page it was loaded from, this
+// one included: served at / it asks for /api/..., and behind something serving
+// it at a path of its own - the operator proxies each webshark at
+// /webshark/<namespace>/<name>/ - it asks under that instead, with nothing to
+// configure and nothing to rewrite in what comes back.
 async function api(path, params, init) {
-  const res = await fetch('/api/' + path + '?' + new URLSearchParams(params), init)
+  const res = await fetch('api/' + path + '?' + new URLSearchParams(params), init)
   const body = await res.json()
   if (body && body.err) throw new Error(body.err)
   return body
@@ -163,6 +168,7 @@ const S = {
   sources: [], src: 0, mark: null,
   caps: [], find: '',   // the capture list, and the box narrowing it down
   filed: [],            // caps the box leaves, in the order the list draws
+  picked: new Set(),    // ...and the ones picked out to be opened as one
 }
 
 const list = $('#list'), canvas = $('#canvas'), hex = $('#hex')
@@ -1220,9 +1226,16 @@ $('#tree').addEventListener('dblclick', e => {
   if (el) toggle(el)
 })
 $('footer').addEventListener('click', e => {
-  // on the capture list the bar is the drop hint, so clicking it offers the
-  // same thing a drop does; in the viewer it is the picked field's filter
-  if (!$('#files').hidden) { if (e.target !== $('#pick')) $('#pick').click(); return }
+  // On the capture list the bar is the drop hint, so clicking it offers the
+  // same thing a drop does - unless captures have been picked out, when it is
+  // their open button and Clear is the one part of it with a click of its own.
+  // In the viewer it is the picked field's filter.
+  if (!$('#files').hidden) {
+    if (e.target === $('#unpick')) { pickNone(); return }
+    if (picking()) { openCapture(refOf(S.picked)); return }
+    if (e.target !== $('#pick')) $('#pick').click()
+    return
+  }
   if ($('#field')._filter) filter($('#field')._filter)
 })
 
@@ -1543,6 +1556,13 @@ $('#filter').addEventListener('keydown', e => {
 
 // -------------------------------------------------------------------- files ---
 
+// What the server opens: one capture, or several read as one - their names
+// joined by commas, which no capture name can hold, and sorted, which is the
+// order the server puts them back in (parts() in src/merge.go). So the same set
+// is the same reference however it was picked, and the same sharkd.
+const refOf = names => [...names].sort().join(',')
+const namesIn = ref => ref.split(',')
+
 const human = n => n < 1024 ? n + ' B'
   : n < 1048576 ? (n / 1024).toFixed(0) + ' kB'
   : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB'
@@ -1567,6 +1587,10 @@ async function files() {
   sync()
 
   S.caps = await api('captures').catch(err => { note(err.message); return [] })
+  // a capture picked before it was deleted is no longer one of them
+  for (const name of S.picked) {
+    if (!S.caps.some(c => c.name === name)) S.picked.delete(name)
+  }
   drawFiles()
   scanAll()
 }
@@ -1590,7 +1614,7 @@ function drawFiles() {
     if (verdict === 'maybe') waiting++
     S.filed.push({ c, tent: verdict === 'maybe' })
   }
-  filesPaint()
+  pickbar()
   $('#empty').hidden = S.filed.length > 0
   $('#empty').textContent = !S.caps.length ? 'No captures yet.'
     : 'No capture matches that.'
@@ -1610,11 +1634,12 @@ function fileSlot(i) {
   while (fileSlots.length <= i) {
     const el = document.createElement('div')
     el.className = 'caprow'
+    const mark = span('k')
     const name = span('n'), size = span('s'), at = span('t'), protos = span('p'), action = span('a')
     name.appendChild(document.createElement('a')).className = 'open'
     action.appendChild(document.createElement('a')).className = 'dl'
     action.firstChild.textContent = 'download'
-    el.append(name, size, at, protos, action)
+    el.append(mark, name, size, at, protos, action)
     filecanvas.appendChild(el)
     fileSlots.push(el)
   }
@@ -1633,19 +1658,24 @@ function filesDraw() {
     el.style.top = (i * CROW) + 'px'
     el.hidden = false
     el.classList.toggle('tent', tent)
+    // which row this slot is holding, for the click and the press that pick it:
+    // the pool recycles the element, so the index cannot be closed over
+    el.dataset.i = i
+    const on = S.picked.has(c.name)
+    el.classList.toggle('on', on)
+    el.children[0].textContent = on ? '\u2713' : ''
 
     const link = el.querySelector('a.open')
     link.textContent = c.name
     link.title = c.name
-    link.dataset.name = c.name
 
-    el.children[1].textContent = human(c.size)
+    el.children[2].textContent = human(c.size)
 
-    const at = el.children[2]
+    const at = el.children[3]
     at.textContent = captured(c)
     at.title = spelt(c)
 
-    const protos = el.children[3]
+    const protos = el.children[4]
     protos.title = !c.protos ? 'still reading'
       : (c.partial ? c.protos.length + ' protocols in the first frames of the capture'
         : c.protos.length + ' protocols') + '\n' + c.protos.join(' ')
@@ -1663,7 +1693,7 @@ function filesDraw() {
       protos.append(c.protos.filter(p => !hit.includes(p)).join(' '))
     }
 
-    el.querySelector('a.dl').href = '/api/file?f=' + encodeURIComponent(c.name)
+    el.querySelector('a.dl').href = 'api/file?f=' + encodeURIComponent(c.name)
   }
   for (; s < fileSlots.length; s++) fileSlots[s].hidden = true
 }
@@ -1680,13 +1710,103 @@ function filesPaint() {
 // browser. The row rather than the name it starts with, which is a line of text
 // tall - a target a mouse can hit and a finger cannot, the rest of the row
 // having looked just as clickable and done nothing.
+//
+// ...unless captures have been picked out, which is the other thing a click on a
+// row does - see picking below.
 filecanvas.addEventListener('click', e => {
   if (e.target.closest('a.dl')) return
   const row = e.target.closest('.caprow')
-  if (row) openCapture(row.querySelector('a.open').dataset.name)
+  if (!row) return
+  if (pressed) { pressed = false; return }   // a long press has already had this
+  const i = +row.dataset.i
+  if (e.shiftKey) pickRow(i, 'through')
+  else if (e.ctrlKey || e.metaKey || picking()) pickRow(i)
+  else openCapture(S.filed[i].c.name)
 })
 filelist.addEventListener('scroll', filesPaint, { passive: true })
 new ResizeObserver(filesPaint).observe(filelist)
+
+// ------------------------------------------------------- picking several ---
+
+// Two sides of the same call are two captures, and reading them against each
+// other is what a merge is for: the picked ones are opened as one reference
+// (refOf), which the server merges by timestamp into the one file sharkd loads -
+// so they are one packet list, one display filter and one sequence diagram. See
+// src/merge.go.
+//
+// The list is a list of captures to open until the first one is picked, and a
+// list to pick from after that: nothing is on a row, and no column is under it,
+// until ctrl-click (cmd-click), shift-click or - where there are no modifiers to
+// press - a long press says that is what this is. From there a plain click picks
+// too, and the way back out is the footer's Clear, Escape, or the back gesture
+// that reaches the same place (pop()).
+let anchor = -1        // the row a shift-click reaches back to
+let pressed = false    // ...and whether a long press has just picked one
+
+const picking = () => S.picked.size > 0
+
+function pickRow(i, how) {
+  const c = S.filed[i] && S.filed[i].c
+  if (!c) return
+  // a shift-click takes everything between the two, which is the run of captures
+  // an eye picked out of the list; a plain one is the row it is on
+  if (how === 'through' && anchor >= 0 && anchor < S.filed.length) {
+    const [from, to] = anchor < i ? [anchor, i] : [i, anchor]
+    for (let j = from; j <= to; j++) S.picked.add(S.filed[j].c.name)
+  } else {
+    if (S.picked.has(c.name)) S.picked.delete(c.name)
+    else S.picked.add(c.name)
+    anchor = i
+  }
+  pickbar()
+}
+
+function pickNone() {
+  S.picked.clear()
+  anchor = -1
+  pickbar()
+}
+
+// The marks on the rows and the offer in the footer, which is the whole of what
+// picking looks like: the bar is the list's open button either way (see the
+// footer's own listener), so what changes is what it says it will open.
+function pickbar() {
+  const n = S.picked.size
+  $('#files').classList.toggle('picking', n > 0)
+  $('#picks').hidden = $('#unpick').hidden = !n
+  // one capture picked is still a capture to open by name: what the bar offers
+  // is what opening it will do, which for several is a merge and worth saying
+  $('#picks').textContent = n === 1 ? 'Open ' + [...S.picked][0]
+    : 'Open ' + n + ' captures as one'
+  $('#picks').title = n < 2 ? ''
+    : 'Read as one capture, their frames in time order:\n' + [...S.picked].sort().join('\n')
+  filesPaint()
+}
+
+// A touch has no modifier to hold, so the press itself is what picks: long
+// enough to be meant, and let go of the moment it turns into the scroll this
+// list is mostly touched for. The click that follows the press is the one the
+// row would have opened on, which is what `pressed` swallows.
+let press = null, held = null
+filecanvas.addEventListener('pointerdown', e => {
+  pressed = false
+  if (e.pointerType === 'mouse' || e.target.closest('a.dl')) return
+  const row = e.target.closest('.caprow')
+  if (!row) return
+  const i = +row.dataset.i
+  held = { x: e.clientX, y: e.clientY }
+  press = setTimeout(() => { press = null; pressed = true; pickRow(i) }, 450)
+})
+filecanvas.addEventListener('pointermove', e => {
+  if (press && Math.hypot(e.clientX - held.x, e.clientY - held.y) > 10) letgo()
+}, { passive: true })
+for (const done of ['pointerup', 'pointercancel', 'pointerleave']) {
+  filecanvas.addEventListener(done, letgo)
+}
+function letgo() { clearTimeout(press); press = null }
+// the press has picked the row; the menu the browser would put over it on the
+// same gesture is not what was being asked for
+filecanvas.addEventListener('contextmenu', e => { if (pressed) e.preventDefault() })
 
 // Protocols are a dissection, so the server does not put them in the listing -
 // they are asked for a file at a time and the list is redrawn as each lands. The
@@ -1874,6 +1994,7 @@ function moment(word) {
 function find(text) {
   S.find = text
   if ($('#filter').value !== text) $('#filter').value = text
+  anchor = -1   // the row it named is not the row that index is now
   drawFiles()
   sync()
 }
@@ -1898,7 +2019,8 @@ async function locate(num) {
 }
 
 async function openCapture(file, want, num, as) {
-  note('Opening ' + file + ' …')
+  const names = namesIn(file)
+  note(names.length > 1 ? 'Merging ' + names.length + ' captures …' : 'Opening ' + file + ' …')
   let st
   try {
     st = await api('status', { f: file })
@@ -1919,7 +2041,11 @@ async function openCapture(file, want, num, as) {
   $('#back').hidden = false
   $('#brand').hidden = true
   $('#name').hidden = false
-  $('#name').textContent = st.filename.replace(/\.[^.]+$/, '')
+  // the reference rather than st.filename, which for a merge is the temp file
+  // the server made of them and names nothing the list ever showed
+  $('#name').textContent = names.map(n => n.replace(/\.[^.]+$/, '')).join(' + ')
+  $('#name').title = names.length < 2 ? ''
+    : names.length + ' captures read as one, their frames in time order:\n' + names.join('\n')
   $('#filter').placeholder = 'display filter'
   $('#filter').value = S.filter
   note('')
@@ -1958,6 +2084,7 @@ function pop() {
   if (!$('#complete').hidden) { closeComplete(); return true }
   if (S.selIdx >= 0) { deselect(); return true }
   if (S.file) { closeCapture(); return true }
+  if (picking()) { pickNone(); return true }
   return false   // the capture list is the bottom of it: nothing left to close
 }
 
@@ -1974,7 +2101,7 @@ async function upload(chosen) {
     if (!/^[A-Za-z0-9]/.test(name)) name = ('c' + name).slice(0, 128)
     note('uploading ' + name + ' …')
     try {
-      const res = await fetch('/api/file?f=' + encodeURIComponent(name), { method: 'POST', body: file })
+      const res = await fetch('api/file?f=' + encodeURIComponent(name), { method: 'POST', body: file })
       const body = await res.json()
       if (body.err) throw new Error(body.err)
     } catch (err) { note(name + ': ' + err.message); return }
@@ -2104,7 +2231,12 @@ function sync() {
 function restore() {
   const p = new URLSearchParams(location.hash.slice(1))
   S.find = p.get('s') || ''
-  if (p.get('f')) openCapture(p.get('f'), p.get('q') || '', +p.get('n') || 0, p.get('v'))
+  const f = p.get('f')
+  // a reference naming several captures is a set the list picked out, so going
+  // back from it - or reloading and then going back - lands on that set still
+  // picked, rather than on a list with no sign of what was just being read
+  if (f && f.includes(',')) S.picked = new Set(namesIn(f))
+  if (f) openCapture(f, p.get('q') || '', +p.get('n') || 0, p.get('v'))
   else files()
 }
 

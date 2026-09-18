@@ -1,0 +1,10 @@
+apiVersion: v2
+name: webshark-operator
+description: tcpdump in any pod, streamed into webshark - capture pods driven by a PacketCapture object, and the webshark deployment they feed
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/lyatanski/webshark
+sources:
+  - https://github.com/lyatanski/webshark
+keywords: [wireshark, tcpdump, pcap, capture, network, troubleshooting]

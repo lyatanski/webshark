@@ -1,0 +1,155 @@
+/* The operator's page, in webshark's own scheme - same variables, same density,
+   no framework and no build step. */
+
+:root {
+  --bg: #fff;
+  --fg: #1a1a1a;
+  --dim: #6a6a6a;
+  --line: #d8dade;
+  --head: #f2f3f5;
+  --sel: #2f6fd0;
+  --selfg: #fff;
+  --ok: #167a3c;
+  --warn: #c60;
+  --err: #d33;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --pane: color-mix(in srgb, #fff 8%, var(--bg));
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --fg: #dfe2e6; --dim: #8b9098; --line: #2c3038;
+  --head: #1e2126; --sel: #3d7ddb; --ok: #57c98a; --warn: #e3a04a; --err: #ff7070;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --fg: #dfe2e6; --dim: #8b9098; --line: #2c3038;
+    --head: #1e2126; --sel: #3d7ddb; --ok: #57c98a; --warn: #e3a04a; --err: #ff7070;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+a { color: var(--sel) }
+.quiet { color: var(--dim) }
+.spacer { flex: 1 }
+
+/* ------------------------------------------------------------------ header */
+
+header {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 12px;
+  background: var(--head);
+  border-bottom: 1px solid var(--line);
+}
+header h1 { margin: 0; font-size: 14px; font-weight: 600 }
+#brand svg { width: 20px; height: 20px; display: block; fill: var(--fg) }
+header a { text-decoration: none }
+
+/* ------------------------------------------------------------------ inputs */
+
+input, select, button {
+  font: inherit; color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--sel) 50%, transparent); outline-offset: -1px }
+button { background: var(--head); cursor: pointer }
+button:hover:not(:disabled) { border-color: var(--sel) }
+button:disabled { opacity: .5; cursor: default }
+button.go { background: var(--sel); color: var(--selfg); border-color: var(--sel); font-weight: 600 }
+button.link { border: 0; background: none; color: var(--sel); padding: 2px 4px }
+input[type=checkbox] { accent-color: var(--sel); margin: 0 }
+
+main { padding: 12px; max-width: 1100px; margin: 0 auto; padding-bottom: 80px }
+section { margin-bottom: 18px }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 0 0 6px }
+
+/* -------------------------------------------------------------------- pods */
+
+.bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap }
+.bar #selector { flex: 1; min-width: 180px; font-family: var(--mono) }
+
+table { width: 100%; border-collapse: collapse; table-layout: auto }
+th {
+  text-align: left; font-weight: 500; color: var(--dim);
+  border-bottom: 1px solid var(--line); padding: 4px 6px; white-space: nowrap;
+}
+td { padding: 3px 6px; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent) }
+tr:hover td { background: color-mix(in srgb, var(--sel) 6%, transparent) }
+td.tick, th.tick { width: 24px }
+td.pod { font-family: var(--mono) }
+td.node, td.file { color: var(--dim) }
+tbody tr.off { opacity: .55 }
+
+/* a capture's state, wherever it is shown */
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); white-space: nowrap }
+.badge.Capturing { color: var(--sel); border-color: currentColor }
+.badge.Completed { color: var(--ok); border-color: currentColor }
+.badge.Failed { color: var(--err); border-color: currentColor }
+.badge.Pending { color: var(--warn); border-color: currentColor }
+
+/* ------------------------------------------------------------------- start */
+
+#start {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 2;
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--head);
+  border-top: 1px solid var(--line);
+}
+#start #filter { flex: 1; min-width: 220px; font-family: var(--mono) }
+#start label { color: var(--dim); white-space: nowrap }
+#start input[size] { font-family: var(--mono) }
+
+/* ---------------------------------------------------------------- captures */
+
+.capture { border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; background: var(--pane) }
+.capture > summary {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 6px 10px; cursor: pointer; list-style: none;
+}
+.capture > summary::-webkit-details-marker { display: none }
+.capture > summary::before { content: "\25B8"; color: var(--dim) }
+.capture[open] > summary::before { content: "\25BE" }
+.capture .name { font-weight: 600 }
+.capture .what { color: var(--dim); font-family: var(--mono); font-size: 12px }
+.capture .body { padding: 0 10px 8px }
+.capture table { margin-top: 4px }
+.capture .msg { color: var(--err); font-size: 12px; font-family: var(--mono) }
+
+/* ------------------------------------------------------------------ viewer */
+
+/* webshark, over the whole window - it is a full page in its own right and
+   wants the room, and the captures behind it are where close goes back to */
+#viewer {
+  position: fixed; inset: 0; z-index: 4;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+}
+#viewer[hidden] { display: none }
+#viewer .bar { margin: 0; padding: 4px 8px; background: var(--head); border-bottom: 1px solid var(--line) }
+#viewer .bar a { text-decoration: none }
+#viewing { font-family: var(--mono) }
+#close { line-height: 1; padding: 2px 7px }
+#frame { flex: 1; width: 100%; border: 0 }
+
+#toast {
+  position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%);
+  background: var(--fg); color: var(--bg);
+  padding: 6px 12px; border-radius: 4px; z-index: 3; max-width: 80vw;
+}
+#toast.err { background: var(--err); color: #fff }
+
+@media (max-width: 640px) {
+  td.node, th.node { display: none }
+}

@@ -1,0 +1,15 @@
+# Five minutes of SIP out of every pcscf pod in this namespace, into the only
+# Webshark there is. Nothing is added to those pods: the capture runs in a pod of
+# the operator's own, on the same node, and steps into their network namespace.
+# Five minutes is the longest it runs - deleting this stops it sooner.
+apiVersion: webshark.io/v1alpha1
+kind: PacketCapture
+metadata:
+  name: sip
+  namespace: ims
+spec:
+  podSelector:
+    matchLabels:
+      app: pcscf
+  filter: udp port 5060 or tcp port 5060
+  duration: 5m

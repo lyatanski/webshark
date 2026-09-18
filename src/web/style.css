@@ -36,6 +36,12 @@
   --sel: #2f6fd0;
   --selfg: #fff;
   --hit: #fff6c2;
+  /* a capture picked out to be opened with another: the selection colour at the
+     strength a whole row can carry, so a picked row reads as picked without the
+     name on it having to be read against it. Defined here only - it is built out
+     of --sel, which each scheme sets for itself. */
+  --pick: color-mix(in srgb, var(--sel) 14%, transparent);
+  --pickon: color-mix(in srgb, var(--sel) 22%, transparent);
   /* the three expert severities a row or a tree node is marked with - see SEV in
      app.js. Dark takes them up rather than across: the same three colours read as
      the same three things, at a lightness a dark ground can carry. */
@@ -95,7 +101,14 @@ header {
 }
 #brand { display: flex; align-items: center; }
 #brand svg { width: 18px; height: 18px; fill: var(--fg); }
-#name { font-weight: 600; white-space: nowrap; }
+/* Several captures read as one are named as one - "pcscf + scscf" - so this can
+   run long where a single name would not. It gives way to the filter box rather
+   than squeezing it, and what is cut off is on the title, which holds the whole
+   list either way. */
+#name {
+  font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 45%;
+}
 #filterbar { display: flex; flex: 1; gap: 4px; min-width: 0; position: relative; }
 #filter {
   flex: 1; min-width: 0; padding: 3px 6px;
@@ -225,9 +238,19 @@ button {
    instead. Centring the cells rather than stretching them takes whatever line
    box a cell ends up with and puts it down the middle either way, so a column
    can set its own font without coming off the row's line. */
+/* The leading column is the picking mark, and it is nothing at all until a
+   capture has been picked: a list of captures to open is what this is, and a
+   column of empty boxes down the side of it would be a list of captures to
+   tick. The first ctrl-click (or long press) opens the column on every row -
+   see pickRow() in app.js - and the footer is what closes it again. */
 #filehead, .caprow {
-  display: grid; grid-template-columns: 26% 6em 14em 1fr 7em; align-items: center;
+  display: grid; grid-template-columns: 0 26% 6em 14em 1fr 7em; align-items: center;
 }
+/* not :is(#filehead, .caprow), which would take the id's specificity into the
+   phone layout's own picking rule below and beat it */
+#files.picking #filehead,
+#files.picking .caprow { grid-template-columns: 1.7em 26% 6em 14em 1fr 7em; }
+.caprow .k { padding: 0; text-align: center; color: var(--sel); font-size: 13px; }
 .caprow { height: var(--row); line-height: var(--row); }
 #filehead {
   position: sticky; top: 0; z-index: 2;   /* over the rows, which stack among themselves */
@@ -240,6 +263,13 @@ button {
 /* the whole row opens the capture - see the click handler in app.js */
 .caprow { position: absolute; left: 0; right: 0; cursor: pointer; }
 @media (hover: hover) { .caprow:hover { background: var(--head); } }
+/* after the hover rule, so a picked row stays visibly picked under the pointer */
+.caprow.on { background: var(--pick); }
+@media (hover: hover) { .caprow.on:hover { background: var(--pickon); } }
+/* the row is a click target, and a drag across one was never a selection worth
+   having - on a touch screen it is the long press that picks the capture, and
+   the text callout would be over the row it just picked */
+.caprow { user-select: none; -webkit-touch-callout: none; }
 .caprow .n { font-family: var(--mono); }
 .caprow .s, .caprow .t, .caprow .a { color: var(--dim); }
 /* a title is over its own column's text, so the two right-aligned columns'
@@ -271,15 +301,19 @@ button {
     /* the two dimmed columns to their own content, the protocols to the rest,
        and the link to the width it has above - minmax(0,1fr) rather than 1fr so
        a long protocol list takes the leftovers instead of setting them */
-    grid-template-columns: auto auto minmax(0, 1fr) 7em;
+    grid-template-columns: 0 auto auto minmax(0, 1fr) 7em;
     grid-template-rows: repeat(2, calc(var(--row) / 2));
     line-height: calc(var(--row) / 2);
   }
-  .caprow .n { grid-area: 1 / 1 / 2 / 4; }
-  .caprow .s { grid-area: 2 / 1 / 3 / 2; text-align: left; }
-  .caprow .t { grid-area: 2 / 2 / 3 / 3; }
-  .caprow .p { grid-area: 2 / 3 / 3 / 4; }
-  .caprow .a { grid-area: 1 / 4 / 3 / 5; }   /* the link, against both lines */
+  #files.picking .caprow { grid-template-columns: 2em auto auto minmax(0, 1fr) 7em; }
+  /* both of the full-height cells against both lines: the mark down one side of
+     the folded row and the download link down the other */
+  .caprow .k { grid-area: 1 / 1 / 3 / 2; }
+  .caprow .n { grid-area: 1 / 2 / 2 / 5; }
+  .caprow .s { grid-area: 2 / 2 / 3 / 3; text-align: left; }
+  .caprow .t { grid-area: 2 / 3 / 3 / 4; }
+  .caprow .p { grid-area: 2 / 4 / 3 / 5; }
+  .caprow .a { grid-area: 1 / 5 / 3 / 6; }   /* the link, against both lines */
 }
 
 body.drop { outline: 3px solid var(--sel); outline-offset: -3px; }
@@ -788,6 +822,18 @@ footer:has(#field:not(:empty)) { cursor: pointer; }
 footer > span:empty { display: none; }
 /* only a hint for the capture list, and only while #msg has nothing more
    pressing to say - the viewer has nowhere to drop a file onto, and a status
-   message (opening, uploading, still reading...) already says enough */
+   message (opening, uploading, still reading...) already says enough. Nor is it
+   a hint while captures are picked out: the bar is their open button then, and
+   says so. */
 #viewer:not([hidden]) ~ footer #drophint,
-#msg:not(:empty) ~ #drophint { display: none; }
+#msg:not(:empty) ~ #drophint,
+#picks:not([hidden]) ~ #drophint { display: none; }
+/* the picks outlive the open, so that coming back lands on them still picked -
+   but the offer to open them is the list's, and in the viewer the bar is the
+   picked field's filter */
+#viewer:not([hidden]) ~ footer :is(#picks, #unpick) { display: none; }
+/* what the bar offers while captures are picked, and beside it the way out of
+   picking them - the only part of the footer with a click of its own */
+#picks { color: var(--sel); font-weight: 600; }
+#unpick { color: var(--dim); text-decoration: underline; text-underline-offset: 2px; }
+@media (hover: hover) { #unpick:hover { color: var(--fg); } }

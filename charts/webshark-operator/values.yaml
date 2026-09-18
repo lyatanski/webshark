@@ -1,0 +1,140 @@
+# ---------------------------------------------------------------- operator --
+
+image:
+  repository: ghcr.io/lyatanski/webshark-operator
+  # defaults to the chart's appVersion
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+replicaCount: 1
+# Only one replica reconciles at a time. Worth turning on with more than one.
+leaderElect: false
+
+# The image the capture pods run. Empty is the operator's own image, which has
+# tcpdump, curl, nsenter and ip in it. Point this at a registry the captured
+# pods' nodes can actually reach if that is not the same one.
+snifferImage: ""
+
+# How often a running capture's status is re-read, and how often an idle
+# PacketCapture looks for pods that have since been created. The operator does
+# not watch pods - see the note in internal/controller/packetcapture_controller.go.
+poll: 10s
+idlePoll: 30s
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  # The operator reads pods and namespaces cluster-wide, which is a ClusterRole,
+  # and creates the capture pods in its own namespace, which is a Role. Off if
+  # you would rather write both yourself.
+  create: true
+
+# A capture runs tcpdump in a pod of the operator's own, on the node of the pod
+# being captured, and that pod is hostPID with CAP_SYS_ADMIN - it steps into
+# another pod's network namespace, which is root on the node in all but name. It
+# is created in this release's namespace, so that namespace has to allow it:
+#
+#     kubectl label ns webshark pod-security.kubernetes.io/enforce=privileged
+#
+# No other namespace needs anything: the pods being captured are not touched, so
+# they can be as locked down as they like. Leave the label off and the captures
+# are refused, which shows up in the PacketCapture's status rather than anywhere
+# subtle.
+
+# --------------------------------------------------------------------- ui ---
+
+# The operator's page: pick pods, start a capture, watch it land in webshark.
+# There is no authentication in it, and anyone who can reach it can read any
+# pod's traffic - so it is a ClusterIP to port-forward to unless you put
+# something in front that asks who is knocking.
+ui:
+  enabled: true
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    path: /
+    annotations: {}
+    tlsSecretName: ""
+
+metrics:
+  enabled: false
+  port: 8082
+
+# The CustomResourceDefinitions are in crds/, which helm installs before
+# anything else and then leaves alone: `helm upgrade` will not touch them and
+# `helm uninstall` will not delete them - deleting a CRD deletes every object of
+# that kind with it. To take a new version of them:
+#
+#     kubectl apply -f charts/webshark-operator/crds/
+#
+# --skip-crds installs the chart without them.
+
+# --------------------------------------------------------------- webshark ---
+
+# A Webshark for the operator to manage: the deployment reading the captures,
+# the claim they are written into, and a service in front. Captures go here
+# unless a PacketCapture names another one.
+webshark:
+  enabled: true
+  name: webshark
+  image: ghcr.io/lyatanski/webshark:latest
+  imagePullPolicy: IfNotPresent
+  storage:
+    # emptyDir keeps the captures in the pod - they go when it does
+    emptyDir: false
+    size: 10Gi
+    storageClassName: ""
+    existingClaim: ""
+  service:
+    type: ClusterIP
+    port: 8085
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    path: /
+    annotations: {}
+    tlsSecretName: ""
+  # sharkd holds a dissected capture in memory: the limit here is what decides
+  # how large a file can be opened, not how large one can be written.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+  # SHARKD_SESSIONS, SHARKD_IDLE, SCAN_FRAMES - see the webshark README
+  env: []
+  nodeSelector: {}
+  tolerations: []

@@ -1,0 +1,19 @@
+# Diameter anywhere in the cluster, capped at six pods, into a named Webshark.
+# An empty namespaceSelector is every namespace; leaving it out entirely is this
+# PacketCapture's own.
+apiVersion: webshark.io/v1alpha1
+kind: PacketCapture
+metadata:
+  name: diameter
+  namespace: webshark
+spec:
+  namespaceSelector: {}
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: [hss, pcrf]}
+  filter: tcp port 3868
+  duration: 10m
+  maxTargets: 6
+  fileNamePrefix: dia-
+  websharkRef:
+    name: webshark

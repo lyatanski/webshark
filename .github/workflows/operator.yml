@@ -1,0 +1,48 @@
+name: operator
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  push:
+    paths:
+      - operator/**
+      - charts/**
+      - .github/workflows/operator.yml
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    # The checks go through operator/Makefile rather than being spelled out
+    # again here, so that what CI runs and what `make` runs on a laptop cannot
+    # drift apart - and so the controller-gen version is pinned in one place.
+    # Those targets run docker as the invoking user, so nothing comes back
+    # root-owned for the git diff below to trip over.
+    - name: Format, vet and test
+      run: make -C operator test
+    # The generated deepcopy, CRDs and RBAC role are checked in - the CRDs in
+    # the chart, which is where they are installed from - so a types change that
+    # was not regenerated is a failure here rather than a surprise at helm
+    # install time.
+    - name: Generated files are in step with the types
+      run: |
+        make -C operator generate
+        git diff --exit-code operator charts
+    # Nothing regenerates the chart's roles - they are hand-written, and split
+    # differently from the one flat role controller-gen emits - so they are
+    # checked against the markers by what they grant.
+    - name: Chart RBAC is in step with the markers
+      run: make -C operator verify-rbac
+    - name: Lint the chart
+      run: docker run --rm -v "$PWD/charts:/charts" alpine/helm lint /charts/webshark-operator
+    - name: Build
+      run: docker build -t ghcr.io/${{ github.repository_owner }}/webshark-operator operator
+    - name: Login
+      run: >
+        echo "${{ secrets.GITHUB_TOKEN }}"
+        | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+    - name: Publish
+      run: docker push ghcr.io/${{ github.repository_owner }}/webshark-operator

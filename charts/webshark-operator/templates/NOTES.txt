@@ -1,0 +1,59 @@
+webshark-operator {{ .Chart.AppVersion }} is installed in {{ .Release.Namespace }}.
+
+{{ if .Values.ui.enabled -}}
+The page - pick pods, press Capture:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "webshark-operator.fullname" . }} 8080:{{ .Values.ui.service.port }}
+  open http://localhost:8080
+
+Nothing in it asks who you are, and anyone who can reach it can read any pod's
+traffic. Keep it on a ClusterIP, or put something that authenticates in front.
+{{ end -}}
+
+{{ if .Values.webshark.enabled }}
+webshark itself, where the captures land, opens in that page - it is served
+under the page's own address, so nothing else has to be reachable. On its own,
+without the page:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Values.webshark.name }} 8085:{{ .Values.webshark.service.port }}
+  open http://localhost:8085
+{{ else }}
+No Webshark was installed (webshark.enabled=false). Captures need one - make it
+with:
+
+  kubectl apply -f - <<'YAML'
+  apiVersion: webshark.io/v1alpha1
+  kind: Webshark
+  metadata: {name: webshark, namespace: {{ .Release.Namespace }}}
+  spec: {storage: {size: 10Gi}}
+  YAML
+{{ end }}
+Or without the page at all:
+
+  kubectl apply -f - <<'YAML'
+  apiVersion: webshark.io/v1alpha1
+  kind: PacketCapture
+  metadata:
+    name: sip
+    namespace: {{ .Release.Namespace }}
+  spec:
+    podSelector:
+      matchLabels: {app: pcscf}
+    filter: udp port 5060
+    duration: 5m
+  YAML
+
+  kubectl get packetcaptures -w
+
+A capture ends on its duration, or when the PacketCapture is deleted or paused,
+or when the pod being captured goes.
+
+tcpdump runs in a pod of the operator's own, on the node of the pod being
+captured, so nothing is added to that pod and its namespace can be as locked
+down as it likes. The capture pod is hostPID with CAP_SYS_ADMIN, and it is
+created here, so this namespace has to allow it:
+
+  kubectl label ns {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=privileged
+
+Without that label every capture is refused, and the refusal shows up in the
+PacketCapture's status.

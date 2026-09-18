@@ -22,6 +22,9 @@ browser, with no client to install.
   octal number.
 - **Captures list** — sizes, capture times and a protocol summary per file;
   upload by drag-and-drop, download, close.
+- **Several captures as one** — ctrl-click (or long-press) picks captures out of
+  the list, and the footer opens them merged by timestamp: the two ends of the
+  same call are one packet list, one display filter and one flow view.
 - **IMS extras** — a Lua plugin relating SIP, Diameter and the RTP they set up
   by subscriber identity. A C plugin recovering ESP SAs from a capture's own
   AKA registration also lives in this repo, but is disabled for now.
@@ -45,7 +48,27 @@ Configuration is environment variables, all with the defaults shown:
 | `SHARKD_SESSIONS=4` | captures kept loaded at once |
 | `SHARKD_IDLE=600` | seconds before an idle capture is unloaded |
 | `SCAN_FRAMES=20000` | frames dissected for the protocol summary |
+| `MERGE_LIMIT=2048` | MB of captures that may be opened as one merge |
 | `WEB=` | serve the UI off disk instead of the embedded copy |
+
+## In Kubernetes
+
+An operator and a helm chart are in this repo: a `PacketCapture` object says
+which pods to capture from, and the operator runs a tcpdump for each of them,
+streaming the pcap into a webshark it also deploys. That tcpdump runs in a pod of
+the operator's own on the same node, which steps into the target's network
+namespace - so the pod being captured is never touched, and a capture can be
+stopped.
+
+```sh
+helm install ws charts/webshark-operator -n webshark --create-namespace
+kubectl label ns webshark pod-security.kubernetes.io/enforce=privileged
+kubectl apply -f operator/examples/packetcapture.yaml
+```
+
+It has a page of its own - tick pods, give it a filter, press Capture - and the
+files appear in webshark while they are still being written. See
+[operator/README.md](operator/README.md).
 
 ## Build
 
@@ -58,6 +81,8 @@ release instead. CI rebuilds and pushes the image on every push.
 ```
 src/main.go      HTTP handlers and the JSON API (documented at the top of the file)
 src/sharkd.go    one sharkd per open capture, and the pool that ends them
+src/merge.go     several captures read as one: mergecap into a temp file the
+                 session owns, and the reference naming the set
 src/capture.go   capture times from the file header, cached protocol scans
 src/web/         the UI - no framework, no build step: app.js is what the browser runs
 plugins/ims.lua  SIP ↔ Diameter ↔ RTP correlation by subscriber identity
@@ -68,6 +93,10 @@ plugins/ims_esp/ ESP SAs from a capture's own SIP registration, in C: a
 preferences      the hidden columns the UI reads back - ports, the outer end of a
                  tunnel, expert info - plus ESP settings
 colorfilters     coloring rules
+operator/        the Kubernetes operator: PacketCapture and Webshark objects,
+                 tcpdump in a pod on the target's node, streaming into webshark,
+                 and a page to drive it from
+charts/          the helm chart that installs it
 ```
 
 ## Working on the UI

@@ -1,0 +1,26 @@
+# A webshark of one's own: 20 GiB of captures, published at a host name, and
+# room for sharkd to dissect a large file (it holds one in memory).
+apiVersion: webshark.io/v1alpha1
+kind: Webshark
+metadata:
+  name: webshark
+  namespace: webshark
+spec:
+  image: ghcr.io/lyatanski/webshark:latest
+  storage:
+    size: 20Gi
+    storageClassName: fast
+  service:
+    type: ClusterIP
+    port: 8085
+  ingress:
+    enabled: true
+    className: nginx
+    host: webshark.example.net
+    tlsSecretName: webshark-tls
+  env:
+    - {name: SHARKD_SESSIONS, value: "6"}
+    - {name: SHARKD_IDLE, value: "900"}
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {memory: 8Gi}

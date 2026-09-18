@@ -1,0 +1,85 @@
+{{- if .Values.rbac.create }}
+# Cluster-wide, because the pods being captured are in someone else's namespace -
+# but only to read them. Nothing here writes to another namespace at all: the
+# capture pods are created by the namespaced Role below, next to the operator.
+#
+# Hand-written, not copied from the markers on the controllers
+# (operator/config/rbac/role.yaml): leader election is a namespaced Role below,
+# where one flat ClusterRole is all controller-gen can emit. `make verify-rbac`
+# compares the pair against the markers by what they grant, so the split costs
+# nothing in drift.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "webshark-operator.fullname" . }}
+  labels: {{- include "webshark-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [""]
+    resources: [services, persistentvolumeclaims]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [webshark.io]
+    resources: [packetcaptures, websharks]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [webshark.io]
+    resources: [packetcaptures/status, websharks/status]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "webshark-operator.fullname" . }}
+  labels: {{- include "webshark-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "webshark-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "webshark-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Leader election, and the pods a PacketCapture captures with: both are the
+# operator's own business in its own namespace. Creating pods is deliberately
+# not in the ClusterRole above - a capture pod is only ever made here, next to
+# the operator, never in the namespace being captured.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "webshark-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "webshark-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "webshark-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "webshark-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "webshark-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "webshark-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

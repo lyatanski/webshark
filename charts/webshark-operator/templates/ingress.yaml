@@ -1,0 +1,33 @@
+{{- if and .Values.ui.enabled .Values.ui.ingress.enabled }}
+# Nothing in the page asks who you are. Whatever is in front of this ingress
+# should.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "webshark-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "webshark-operator.labels" . | nindent 4 }}
+  {{- with .Values.ui.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ui.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ui.ingress.tlsSecretName }}
+  tls:
+    - hosts: [{{ $.Values.ui.ingress.host | quote }}]
+      secretName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ui.ingress.host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.ui.ingress.path | default "/" }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "webshark-operator.fullname" . }}
+                port:
+                  number: {{ .Values.ui.service.port }}
+{{- end }}

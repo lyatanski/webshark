@@ -1,0 +1,13 @@
+# Two pods by name, everything they send and receive, until 20000 packets or ten
+# minutes - whichever comes first, unless this is deleted or paused first. This
+# is what the page's tick boxes produce.
+apiVersion: webshark.io/v1alpha1
+kind: PacketCapture
+metadata:
+  name: pair
+  namespace: demo
+spec:
+  podNames: [web-75d8d959fb-4tggn, web-75d8d959fb-6xwsd]
+  duration: 10m
+  maxPackets: 20000
+  snaplen: 262144

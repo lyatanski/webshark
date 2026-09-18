@@ -17,6 +17,11 @@ package main
 //	POST /api/file?f=                   upload one (raw body)
 //	POST /api/close?f=                  end that capture's sharkd
 //
+// The `f=` of status, frames, frame, check, complete and close is a capture
+// reference: one capture, or several joined by commas and read as one, merged
+// by timestamp before sharkd is given them - see merge.go. The other three are
+// about a file on disk rather than a view of one, so theirs is a single name.
+//
 // Responses are sharkd's own JSON, forwarded without being decoded, except one:
 // /api/frames. sharkd repeats every pcapng frame comment in the packet list, and
 // a ptcpdump capture carries ~1.4 kB of container metadata per frame, which is
@@ -38,8 +43,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -62,6 +67,11 @@ func main() {
 		env("SHARKD", "sharkd"), srv.dir,
 		atoi(env("SHARKD_SESSIONS", "4"), 4),
 		time.Duration(atoi(env("SHARKD_IDLE", "600"), 600))*time.Second,
+		&merger{
+			bin:   env("MERGECAP", "mergecap"),
+			dir:   srv.dir,
+			limit: int64(atoi(env("MERGE_LIMIT", "2048"), 2048)) << 20,
+		},
 	)
 	srv.scans = newScanner(srv.pool, atoi(env("SCAN_FRAMES", "20000"), 20000))
 
@@ -104,7 +114,13 @@ func (s *server) captures(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	open := s.pool.open()
+	// one open reference can be several captures, and each of them is open
+	open := map[string]bool{}
+	for _, ref := range s.pool.open() {
+		for _, name := range strings.Split(ref, refSep) {
+			open[name] = true
+		}
+	}
 
 	// Times are read out of every file, being two seeks each (capture.go);
 	// protocols are only reported where a scan has already been asked for, since
@@ -129,7 +145,7 @@ func (s *server) captures(w http.ResponseWriter, r *http.Request) {
 		c := capture{
 			Name:  e.Name(),
 			Size:  info.Size(),
-			Open:  slices.Contains(open, e.Name()),
+			Open:  open[e.Name()],
 			Mtime: info.ModTime().UnixMilli(),
 			times: captureTimes(filepath.Join(s.dir, e.Name())),
 		}
@@ -201,12 +217,12 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) close(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.name(w, r)
+	ref, ok := s.ref(w, r)
 	if !ok {
 		return
 	}
-	s.pool.closeFile(name)
-	send(w, map[string]any{"closed": name})
+	s.pool.closeFile(ref)
+	send(w, map[string]any{"closed": ref})
 }
 
 // -------------------------------------------------------------------- sharkd --
@@ -232,11 +248,11 @@ func (s *server) frame(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) check(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.name(w, r)
+	ref, ok := s.ref(w, r)
 	if !ok {
 		return
 	}
-	if _, err := s.pool.call(name, "check", map[string]any{"filter": r.URL.Query().Get("filter")}); err != nil {
+	if _, err := s.pool.call(ref, "check", map[string]any{"filter": r.URL.Query().Get("filter")}); err != nil {
 		send(w, map[string]any{"ok": false, "err": err.Error()})
 		return
 	}
@@ -255,7 +271,7 @@ func (s *server) complete(w http.ResponseWriter, r *http.Request) {
 // top. A row is the columns, the frame number and - when a coloring rule matched
 // the frame - the colours that rule gives it, which is all the list draws.
 func (s *server) frames(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.name(w, r)
+	ref, ok := s.ref(w, r)
 	if !ok {
 		return
 	}
@@ -278,7 +294,7 @@ func (s *server) frames(w http.ResponseWriter, r *http.Request) {
 	if filter := q.Get("filter"); filter != "" {
 		params["filter"] = filter
 	}
-	raw, err := s.pool.call(name, "frames", params)
+	raw, err := s.pool.call(ref, "frames", params)
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
@@ -312,11 +328,11 @@ func (s *server) frames(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) forward(w http.ResponseWriter, r *http.Request, method string, params any) {
-	name, ok := s.name(w, r)
+	ref, ok := s.ref(w, r)
 	if !ok {
 		return
 	}
-	raw, err := s.pool.call(name, method, params)
+	raw, err := s.pool.call(ref, method, params)
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
@@ -336,6 +352,17 @@ func (s *server) name(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+// ...and what the sharkd endpoints take: one capture or several read as one,
+// put back in the canonical order the pool keys its sessions on (parts).
+func (s *server) ref(w http.ResponseWriter, r *http.Request) (string, bool) {
+	names, ok := parts(r.URL.Query().Get("f"))
+	if !ok {
+		fail(w, http.StatusBadRequest, "f?")
+		return "", false
+	}
+	return strings.Join(names, refSep), true
 }
 
 func send(w http.ResponseWriter, v any) {

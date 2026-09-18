@@ -1,0 +1,55 @@
+{{- if .Values.webshark.enabled }}
+# The deployment the captures stream into. It is a Webshark object rather than a
+# Deployment in this chart on purpose: the operator owns it, and a PacketCapture
+# can find it by name.
+apiVersion: webshark.io/v1alpha1
+kind: Webshark
+metadata:
+  name: {{ .Values.webshark.name }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "webshark-operator.labels" . | nindent 4 }}
+spec:
+  image: {{ .Values.webshark.image }}
+  imagePullPolicy: {{ .Values.webshark.imagePullPolicy }}
+  storage:
+    emptyDir: {{ .Values.webshark.storage.emptyDir }}
+    size: {{ .Values.webshark.storage.size }}
+    {{- with .Values.webshark.storage.storageClassName }}
+    storageClassName: {{ . }}
+    {{- end }}
+    {{- with .Values.webshark.storage.existingClaim }}
+    existingClaim: {{ . }}
+    {{- end }}
+  service:
+    type: {{ .Values.webshark.service.type }}
+    port: {{ .Values.webshark.service.port }}
+  {{- with .Values.webshark.ingress }}
+  ingress:
+    enabled: {{ .enabled }}
+    {{- with .className }}
+    className: {{ . }}
+    {{- end }}
+    {{- with .host }}
+    host: {{ . | quote }}
+    {{- end }}
+    path: {{ .path | default "/" }}
+    {{- with .annotations }}
+    annotations: {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .tlsSecretName }}
+    tlsSecretName: {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.webshark.resources }}
+  resources: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.webshark.env }}
+  env: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.webshark.nodeSelector }}
+  nodeSelector: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.webshark.tolerations }}
+  tolerations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

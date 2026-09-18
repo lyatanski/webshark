@@ -67,6 +67,9 @@
 <section id=files>
   <div id=filelist>
     <div id=filehead>
+      <!-- the picking column, which is nothing until a capture has been picked
+           out to be opened with another - see #files.picking in style.css -->
+      <span class=k></span>
       <span class=n>Capture</span><span class=s>Size</span><span class=t>Captured</span>
       <span class=p title="What each capture holds the most of, first. A ≈ means only
 the beginning of that capture was read, so a protocol later in it may be missing.">Protocols</span>
@@ -90,8 +93,10 @@ the beginning of that capture was read, so a protocol later in it may be missing
 </section>
 
 <!-- the whole footer is the capture list's open button, so the input it clicks
-     lives in it - see the click handler in app.js -->
-<footer><span id=msg></span><span id=field></span><span id=empty hidden></span><span id=drophint>Drop capture files anywhere on the page, or click to choose</span><input id=pick type=file multiple hidden></footer>
+     lives in it - see the click handler in app.js. Once captures have been
+     picked out it is what opens them instead, #unpick being the way back out -
+     the one part of the bar that is its own target. -->
+<footer><span id=msg></span><span id=field></span><span id=empty hidden></span><span id=picks hidden></span><span id=unpick hidden>Clear</span><span id=drophint>Drop capture files anywhere on the page, or click to choose</span><input id=pick type=file multiple hidden></footer>
 
 <script src=app.js></script>
 </body>
