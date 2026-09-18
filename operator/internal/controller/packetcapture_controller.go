@@ -251,7 +251,7 @@ func (r *PacketCaptureReconciler) start(ctx context.Context, pc *websharkv1alpha
 		return false, fmt.Errorf("pod has no address to find its network namespace by")
 	}
 
-	t.File = captureFileName(pc.Spec.FileNamePrefix, target.Namespace, target.Name, time.Now())
+	t.File = captureFileName(pc.Spec.FileNamePrefix, pc.Name, target.Namespace, target.Name)
 	pod := capturePod(r.Namespace, name, pc, target, r.image(pc), pc.Spec.ImagePullPolicy, uploadURL(upload, t.File))
 	if err := r.Create(ctx, pod); err != nil && !apierrors.IsAlreadyExists(err) {
 		return false, err

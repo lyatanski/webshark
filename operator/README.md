@@ -47,7 +47,7 @@ whole of what identifies the pod.
 The pcap is never written down:
 
 ```
-tcpdump -i any -U -w -  |  curl -T - webshark/api/file?f=<pod>-<ns>-<date>.pcap
+tcpdump -i any -U -w -  |  curl -T - webshark/api/file?f=<capture>-<pod>-<ns>.pcap
 ```
 
 which is webshark's own upload endpoint, streamed chunked. The file appears in
@@ -59,6 +59,13 @@ ReadWriteMany volume to be shared between the capture and the viewer.
 Only tcpdump crosses into the target's network. curl stays in the capture pod,
 the two joined by a fifo, so the upload goes out of the capture pod's own
 address and is not itself in the capture.
+
+The PacketCapture's own name leads that file name because a pcap arrives in
+webshark as a file and nothing else - no object, no labels, nothing saying which
+run took it. With the name in front, one capture's files are what its name in
+webshark's own filter box leaves, and a file downloaded out of webshark still
+says where it came from. `fileNamePrefix` goes in front of it for anyone who
+wants something else there.
 
 The pod being captured is not touched at all: nothing is added to it, nothing is
 left in it, and its namespace's pod-security level has no say in the matter. The
@@ -82,7 +89,7 @@ whole of it is a shell script in
 | `paused` | stop the captures; resuming starts new ones for the pods still there. |
 | `websharkRef` / `websharkURL` | where the pcaps go. Left out: the only Webshark in the namespace, or in the cluster. |
 | `image` | the capture image; it needs tcpdump, curl, nsenter and ip. Defaults to the operator's own. |
-| `fileNamePrefix` | goes in front of `<pod>-<namespace>-<date>.pcap`. |
+| `fileNamePrefix` | goes in front of `<name>-<pod>-<namespace>.pcap`. |
 
 The status has a line per pod - the file it is writing, the state it is in, what
 the API server said if the capture was refused, and the pod doing the capturing,
@@ -180,7 +187,12 @@ webshark.
 
 A capture shows in the **capture** column against the pod it is capturing, even
 though it is not in it, and **pause** really does stop it - resuming starts a new
-capture, in a new file.
+capture, writing the same file name as before.
+
+The **as** box is the object's name, and so is what its files are called in
+webshark - `sip-pcscf-0-ims.pcap`. Left empty it is generated, which is a name
+nobody would search for: worth typing for a capture anyone is going to have to
+find again.
 
 ```sh
 kubectl -n webshark port-forward svc/ws-webshark-operator 8080:80

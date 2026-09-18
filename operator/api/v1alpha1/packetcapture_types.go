@@ -87,8 +87,12 @@ type PacketCaptureSpec struct {
 	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 
 	// FileNamePrefix goes in front of the generated capture file name. The name
-	// is <prefix><pod>-<namespace>-<date>.pcap, and webshark only accepts
-	// [A-Za-z0-9 ._+-].
+	// is <prefix><this object's name>-<pod>-<namespace>.pcap, and webshark only
+	// accepts [A-Za-z0-9 ._+-]. This object's name is in there because a pcap
+	// reaches webshark as a file and nothing else: it is what says, in the
+	// capture list, which run a file came out of. Nothing in the name is unique
+	// to a run, so capturing the same pod again needs the previous file gone -
+	// webshark will not overwrite one.
 	// +optional
 	FileNamePrefix string `json:"fileNamePrefix,omitempty"`
 }

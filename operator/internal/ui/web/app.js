@@ -313,6 +313,10 @@ $('start').addEventListener('submit', async e => {
 
   const body = {
     namespace,
+    // The name is the object's, and the one the capture files are led by - so an
+    // empty box is a generated name in both places, and not a file that says
+    // nothing about where it came from.
+    name: $('capname').value.trim(),
     namespaceSelector,
     podNames: picked.map(key => key.split('/')[1]),
     podSelector: S.selector,
@@ -331,6 +335,7 @@ $('start').addEventListener('submit', async e => {
       body: JSON.stringify(body),
     })
     S.picked.clear()
+    $('capname').value = ''
     toast('started ' + made.metadata.name)
     await refresh()
   } catch (err) { toast(err.message, true) }

@@ -18,31 +18,36 @@ import (
 var websharkName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,127}$`)
 
 func TestCaptureFileName(t *testing.T) {
-	at := time.Date(2026, 9, 16, 11, 16, 11, 0, time.UTC)
-
 	for _, c := range []struct {
-		name            string
-		prefix, ns, pod string
-		want            string
+		name                     string
+		prefix, capture, ns, pod string
+		want                     string
 	}{
-		{"plain", "", "demo", "web-75d8d959fb-4tggn", "web-75d8d959fb-4tggn-demo-20260916-111611.pcap"},
-		{"prefix", "live-", "demo", "web", "live-web-demo-20260916-111611.pcap"},
-		{"unprintable", "", "demo", "we/b:1", "we-b-1-demo-20260916-111611.pcap"},
+		// The capture leads the name: it is the only thing in webshark saying
+		// which run a file belongs to.
+		{"plain", "", "sip", "demo", "web-75d8d959fb-4tggn", "sip-web-75d8d959fb-4tggn-demo.pcap"},
+		{"prefix", "live-", "sip", "demo", "web", "live-sip-web-demo.pcap"},
+		{"unprintable", "", "s/ip", "demo", "we/b:1", "s-ip-we-b-1-demo.pcap"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := captureFileName(c.prefix, c.ns, c.pod, at); got != c.want {
+			if got := captureFileName(c.prefix, c.capture, c.ns, c.pod); got != c.want {
 				t.Errorf("captureFileName = %q, want %q", got, c.want)
 			}
 		})
 	}
 
 	t.Run("long names still fit", func(t *testing.T) {
-		got := captureFileName("", strings.Repeat("n", 63), strings.Repeat("p", 63), at)
+		got := captureFileName("", strings.Repeat("c", 63), strings.Repeat("n", 63), strings.Repeat("p", 63))
 		if !websharkName.MatchString(got) {
 			t.Errorf("captureFileName = %q, which webshark will not accept", got)
 		}
-		if !strings.HasSuffix(got, "-20260916-111611.pcap") {
-			t.Errorf("captureFileName = %q, truncated the time rather than the pod", got)
+		if !strings.HasSuffix(got, "-"+strings.Repeat("n", 63)+".pcap") {
+			t.Errorf("captureFileName = %q, truncated the namespace rather than the pod", got)
+		}
+		// ...and what is left of the head is the capture, not the tail of a pod
+		// name: a file nobody can place is worth less than a truncated one.
+		if !strings.HasPrefix(got, strings.Repeat("c", 43)) {
+			t.Errorf("captureFileName = %q, truncated the capture rather than the pod", got)
 		}
 	})
 }

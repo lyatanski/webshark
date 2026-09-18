@@ -48,6 +48,8 @@
      network namespace, so what it drops never crosses the network. -->
 <form id=start>
   <input id=filter placeholder="pcap filter, e.g. udp port 5060 or tcp port 3868" spellcheck=false autocomplete=off>
+  <label>as <input id=capname placeholder=auto size=10 spellcheck=false autocomplete=off
+    title="the PacketCapture's name, which leads every file it writes in webshark. Left empty, one is generated."></label>
   <label>for <input id=duration value=5m size=4 title="the longest a capture runs; pausing or deleting it stops it sooner"></label>
   <label>iface <input id=iface value=any size=4></label>
   <label>snaplen <input id=snaplen value=0 size=5 title="bytes per packet; 0 is the whole packet"></label>

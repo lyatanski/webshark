@@ -257,13 +257,27 @@ func podIPs(pod *corev1.Pod) []string {
 
 func ptrQuantity(q resource.Quantity) *resource.Quantity { return &q }
 
-// captureFileName is what the capture is called in webshark. The image only
-// accepts ^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,127}$ as a file name, so anything else
-// becomes a dash and the pod name is what gives if the whole is too long - the
-// namespace and the time are worth more at that point.
-func captureFileName(prefix, namespace, pod string, at time.Time) string {
-	suffix := "-" + sanitizeName(namespace) + "-" + at.UTC().Format("20060102-150405") + ".pcap"
-	head := sanitizeName(prefix) + sanitizeName(pod)
+// captureFileName is what the capture is called in webshark. A pcap arrives
+// there as a file and nothing else - no object, no labels, nothing that says
+// which capture took it - so the PacketCapture's own name leads the file name,
+// and typing it into webshark's filter box is what leaves one run's files.
+// FileNamePrefix goes in front of it, for anyone who wants something else there.
+//
+// The image only accepts ^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,127}$ as a file name, so
+// anything else becomes a dash and the pod name is what gives if the whole is
+// too long - the capture and the namespace are worth more at that point, being
+// what the file is looked up by.
+//
+// Nothing in the name is unique to a run: capturing the same pod twice - a
+// resume, a pod coming back under the same name - writes to the same file name,
+// and webshark refuses the second upload (409) until the first file is gone.
+func captureFileName(prefix, capture, namespace, pod string) string {
+	suffix := "-" + sanitizeName(namespace) + ".pcap"
+	head := sanitizeName(prefix)
+	if capture != "" {
+		head += sanitizeName(capture) + "-"
+	}
+	head += sanitizeName(pod)
 	if n := 128 - len(suffix); len(head) > n {
 		head = head[:n]
 	}
