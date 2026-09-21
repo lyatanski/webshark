@@ -778,8 +778,11 @@ body.dragging *, body.dragging .fnode > .fx { cursor: inherit; }
   #panes.bytes > #tree { display: none; }
 }
 
-.n { white-space: nowrap; font: 12px var(--mono); }
-.n > .l { padding: 1px 4px 1px 0; cursor: default; display: block; }
+.n { font: 12px var(--mono); }
+.n > .l {
+  padding: 1px 4px 1px 16px; text-indent: -16px; cursor: default; display: block;
+  white-space: normal; overflow-wrap: anywhere;
+}
 @media (hover: hover) { .n > .l:hover { background: var(--head); } }
 .n.sel > .l { background: var(--sel); color: var(--selfg); }
 .n .t { display: inline-block; width: 16px; font-size: 15px; color: var(--dim); cursor: pointer; }
