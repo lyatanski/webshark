@@ -5,11 +5,12 @@
 
 const S = {
   ns: localStorage.getItem('ns') ?? '',
-  selector: '',
+  query: '',                  // what is in the search box
   webshark: localStorage.getItem('webshark') ?? '',
   picked: new Set(),          // "namespace/pod" of the ticked rows
   folds: new Map(),           // "namespace/capture" -> opened or closed, once said
   pods: [],
+  shown: [],                  // the pods the query leaves, best match first
   captures: [],
   websharks: [],
 }
@@ -50,11 +51,18 @@ async function namespaces() {
   select.value = S.ns
 }
 
+// The selector the pod list in hand was asked for with. A search is matched in
+// the page, so it is only a change of selector that has to go back to the API
+// server - typing in the box otherwise re-lists nothing.
+let listed = ''
+
 async function refresh() {
-  const query = new URLSearchParams({ namespace: S.ns, selector: S.selector })
+  const asked = selector()
+  const query = new URLSearchParams({ namespace: S.ns, selector: asked })
   const [pods, captures, websharks] = await Promise.all([
     api('pods?' + query), api('captures'), api('websharks'),
   ])
+  listed = asked
   S.pods = pods
   S.captures = captures
   S.websharks = websharks
@@ -83,7 +91,6 @@ function paintWebsharks() {
     select.replaceChildren(el('option', { textContent: 'no Webshark in the cluster' }))
   }
   select.value = S.webshark
-  $('go').disabled = !S.websharks.length
 
   const chosen = current()
   const open = $('open')
@@ -93,6 +100,7 @@ function paintWebsharks() {
     open.title = 'opens in this page - ' + (chosen.url || chosen.serviceURL || '')
     open.onclick = inFrame(chosen.namespace + '/' + chosen.name)
   }
+  count()
 }
 
 const current = () => S.websharks.find(w => w.namespace + '/' + w.name === S.webshark)
@@ -146,12 +154,127 @@ function view(url, label) {
 const unview = () => { $('viewer').hidden = true }
 
 // --------------------------------------------------------------------- pods
+//
+// The box above the list is a search, and it is matched here rather than by the
+// API server: a pod stays when every word typed is somewhere in its name or in
+// one of its labels, the letters in order and gaps allowed - so "pcs0" finds
+// sip-pcscf-0, and "core" finds it by tier=core. The list is already in the
+// page, so this costs nothing and narrows as it is typed.
+//
+// Typing what only a label selector has - = ! < > ( in notin - means one
+// instead, and it goes to the API server as it always did. That is not just for
+// exactness: a selector is the one thing an unticked Capture can be left to
+// follow as pods come and go, and a search is not.
+const isSelector = q => /[=!<>(]|\s(in|notin)\s/.test(q)
+const selector = () => isSelector(S.query) ? S.query : ''
+
+const podKey = pod => pod.namespace + '/' + pod.name
+const isRunning = pod => pod.phase === 'Running'
+
+// The pod as its row shows it, which is also what the search reads: with one
+// namespace chosen, every row's namespace is the same and matching it would
+// only let "kube" find everything in kube-system.
+const podName = pod => S.ns ? pod.name : pod.namespace + '/' + pod.name
+
+// One word against one string: every letter of the word, in order. Tried from
+// every place its first letter appears, because the first of them is not always
+// the one that leads the best match - the "pcs" of sip-pcscf-0 is in pcscf, not
+// the p of sip, and taking the first would both score it low and mark the wrong
+// letters.
+function fuzzy(word, text) {
+  const letters = [...word]
+  let best = null
+  for (let at = text.indexOf(letters[0]); at >= 0; at = text.indexOf(letters[0], at + 1)) {
+    const m = align(letters, text, at)
+    if (m && (best === null || m.score > best.score)) best = m
+  }
+  return best
+}
+
+// The word from one starting place, every letter after it taken where it first
+// can be. Letters found together score, reaching over others costs, and one
+// starting a word - after a dash, a dot, the = of a label - is worth something:
+// so a tight match near the front beats the same letters scattered. Answers
+// with where they were, for the row to mark.
+function align(letters, text, start) {
+  let score = 0, from = 0, run = 0
+  const hits = []
+  for (let i = 0; i < letters.length; i++) {
+    const at = i ? text.indexOf(letters[i], from) : start
+    if (at < 0) return null
+    run = at === from && from > 0 ? run + 1 : 0
+    score += 10 + 6 * run - Math.min(at - from, 12)
+    if (at === 0 || '-_./=:'.includes(text[at - 1])) score += 8
+    hits.push(at)
+    from = at + 1
+  }
+  return { score, hits }
+}
+
+// The pods a search leaves, best match first. Every word has to match, but each
+// may match somewhere else: "pcscf core" is a name and a label.
+function search(pods) {
+  const words = S.query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length || isSelector(S.query)) return pods.map(pod => ({ pod, hits: [] }))
+
+  const found = []
+  for (const pod of pods) {
+    const name = podName(pod).toLowerCase()
+    const labels = Object.entries(pod.labels ?? {}).map(([k, v]) => k + '=' + v)
+    let score = 0, hits = [], via = null, every = true
+    for (const word of words) {
+      // A label match counts, but not as much as the same match in the name,
+      // which is what the reader is looking at. The label that did it is kept
+      // with it, since a row matched by a label it does not show says nothing.
+      const inName = fuzzy(word, name)
+      let best = inName && { score: 2 * inName.score, hits: inName.hits, via: null }
+      for (const label of labels) {
+        const m = fuzzy(word, label.toLowerCase())
+        if (m && (best === null || m.score > best.score)) {
+          best = { score: m.score, hits: [], via: { label, hits: m.hits } }
+        }
+      }
+      if (!best) { every = false; break }
+      score += best.score
+      hits = hits.concat(best.hits)
+      via ??= best.via
+    }
+    if (every) found.push({ pod, score, hits, via })
+  }
+  // A stopped pod can still be the one being looked for - it is shown, and
+  // dimmed - but it cannot be captured, so it is never what a search leads with.
+  return found.sort((a, b) => isRunning(b.pod) - isRunning(a.pod)
+    || b.score - a.score
+    || podName(a.pod).localeCompare(podName(b.pod)))
+}
+
+// the letters that matched, marked, so a row says why it is there
+function mark(text, hits) {
+  if (!hits.length) return [text]
+  const on = new Set(hits)
+  const out = []
+  let run = '', lit = on.has(0)
+  for (let i = 0; i < text.length; i++) {
+    if (on.has(i) !== lit) {
+      out.push(lit ? el('mark', { textContent: run }) : run)
+      run = ''
+      lit = on.has(i)
+    }
+    run += text[i]
+  }
+  out.push(lit ? el('mark', { textContent: run }) : run)
+  return out
+}
 
 function paintPods() {
-  const rows = S.pods.map(pod => {
-    const key = pod.namespace + '/' + pod.name
-    const running = pod.phase === 'Running'
-    if (!running) S.picked.delete(key)
+  // a pod that has stopped running cannot be captured, whether the search left
+  // it in view or not
+  for (const pod of S.pods) if (!isRunning(pod)) S.picked.delete(podKey(pod))
+
+  S.shown = search(S.pods)
+  const rows = S.shown.map(({ pod, hits, via }) => {
+    const key = podKey(pod)
+    const running = isRunning(pod)
 
     const tick = el('input', { type: 'checkbox', checked: S.picked.has(key), disabled: !running })
     tick.addEventListener('change', () => {
@@ -165,11 +288,15 @@ function paintPods() {
     return el('tr', { className: running ? '' : 'off' },
       el('td', { className: 'tick' }, tick),
       el('td', { className: 'pod', title: labelText(pod.labels) },
-        S.ns ? pod.name : pod.namespace + '/' + pod.name),
+        mark(podName(pod), hits),
+        via ? el('span', { className: 'via' }, mark(via.label, via.hits)) : null),
       el('td', {}, pod.phase),
       el('td', { className: 'node' }, pod.node ?? ''),
       el('td', {}, captures.length ? captures : ''))
   })
+  if (!rows.length && S.pods.length) {
+    rows.push(el('tr', {}, el('td', { className: 'quiet', colSpan: 5, textContent: 'nothing here matches' })))
+  }
   $('podlist').replaceChildren(...rows)
   $('all').checked = false
   count()
@@ -177,12 +304,27 @@ function paintPods() {
 
 const labelText = labels => Object.entries(labels ?? {}).map(([k, v]) => k + '=' + v).join('\n')
 
+// The pods an unticked Capture takes: the ones the search left. An empty box,
+// or a selector, leaves none by name - the capture is then the selector's or
+// the whole namespace's, and goes on matching pods that turn up later.
+const matched = () => !S.query || isSelector(S.query) ? []
+  : S.shown.filter(({ pod }) => isRunning(pod)).map(({ pod }) => podKey(pod))
+
 function count() {
   const picked = S.picked.size
-  const running = S.pods.filter(p => p.phase === 'Running').length
-  $('podcount').textContent = picked ? picked + ' of ' + running + ' selected' : running + ' running'
-  $('go').textContent = picked ? 'Capture ' + picked + ' pod' + (picked > 1 ? 's' : '')
-    : S.selector ? 'Capture what matches' : 'Capture everything here'
+  const running = S.pods.filter(isRunning).length
+  const hits = matched().length
+  const searching = !!S.query && !isSelector(S.query)
+  $('podcount').textContent = picked ? picked + ' of ' + running + ' selected'
+    : searching ? hits + ' of ' + running + ' matched'
+      : running + ' running'
+
+  // ticked pods first: a search is how they were found, not what is captured
+  const take = picked || hits
+  $('go').textContent = take ? 'Capture ' + take + ' pod' + (take > 1 ? 's' : '')
+    : isSelector(S.query) ? 'Capture what matches'
+      : searching ? 'Capture' : 'Capture everything here'
+  $('go').disabled = !S.websharks.length || (searching && !take)
 }
 
 // ----------------------------------------------------------------- captures
@@ -224,37 +366,69 @@ function paintCaptures() {
     })
 
     const base = websharkURL(capture)
+    // Every card shows the same four columns, and they are named so the
+    // stylesheet can give them the same widths in all of them: one capture's
+    // pods then read down the page against the next one's, not against a
+    // column that moved because a file name was longer.
     const body = el('div', { className: 'body' },
       targets.length ? el('table', {},
         el('thead', {}, el('tr', {},
-          el('th', { textContent: 'pod' }), el('th', { textContent: 'state' }),
-          el('th', { textContent: 'capture file' }), el('th', { textContent: 'since' }))),
-        el('tbody', {}, ...targets.map(t => el('tr', {},
-          el('td', { className: 'pod', title: t.capturer ? 'captured by ' + t.capturer : '' },
-            t.namespace + '/' + t.pod),
-          el('td', {}, el('span', { className: 'badge ' + t.phase, textContent: t.phase })),
-          // the file is linked from the moment tcpdump starts: the upload is
-          // streamed, so webshark can open it while it is still growing
-          el('td', { className: 'file' }, t.file
-            ? el('a', { href: base + '#f=' + encodeURIComponent(t.file), textContent: t.file, onclick: inFrame(t.file) })
-            : ''),
-          // why it failed matters more than when it started, so the last column
-          // is whichever of the two there is
-          el('td', { className: t.message ? 'msg' : 'node' }, t.message || ago(t.startedAt))))))
+          el('th', { className: 'pod', textContent: 'pod' }),
+          el('th', { className: 'state', textContent: 'state' }),
+          el('th', { className: 'file', textContent: 'capture file' }),
+          el('th', { className: 'since', textContent: 'since' }))),
+        el('tbody', {}, ...targets.flatMap(t => {
+          // Why a capture stopped is a word or two - paused, pod gone - and it
+          // says more than when it started, so it takes the last column. What a
+          // pod that never captured leaves behind is a paragraph of kubelet or
+          // tcpdump instead, and that gets a line of its own under the row: a
+          // column narrow enough to line up with the other cards is not
+          // somewhere a sentence can be read.
+          const brief = t.phase === 'Completed' || t.phase === 'Capturing'
+          const row = el('tr', {},
+            el('td', { className: 'pod', title: t.capturer ? 'captured by ' + t.capturer : '' },
+              t.namespace + '/' + t.pod),
+            el('td', { className: 'state' },
+              el('span', { className: 'badge ' + t.phase, textContent: t.phase })),
+            // the file is linked from the moment tcpdump starts: the upload is
+            // streamed, so webshark can open it while it is still growing
+            el('td', { className: 'file' }, t.file
+              ? el('a', { href: base + '#f=' + encodeURIComponent(t.file), textContent: t.file, onclick: inFrame(t.file) })
+              : ''),
+            el('td', { className: brief && t.message ? 'since msg' : 'since' },
+              brief && t.message ? t.message : ago(t.startedAt)))
+          if (brief || !t.message) return [row]
+          return [row, el('tr', { className: 'why' },
+            el('td', { className: 'msg', colSpan: 4, textContent: t.message }))]
+        })))
         : el('p', { className: 'quiet', textContent: message(status) }))
 
     const details = el('details', { className: 'capture', open },
       el('summary', {},
-        el('span', { className: 'name', textContent: capture.metadata.name }),
-        el('span', { className: 'quiet', textContent: capture.metadata.namespace }),
+        el('span', { className: 'head' },
+          el('span', { className: 'name', textContent: capture.metadata.name }),
+          el('span', { className: 'quiet', textContent: capture.metadata.namespace })),
         el('span', { className: 'what', textContent: what(spec) }),
-        el('span', { className: 'spacer' }),
-        ...counts(status),
-        pause, remove),
+        el('span', { className: 'acts' }, ...counts(status), pause, remove)),
       body)
     details.addEventListener('toggle', () => S.folds.set(key, details.open))
     return details
   }))
+  fit()
+}
+
+// What a capture was asked for is the one thing in its heading with no length
+// to speak of - a filter can be a line by itself. So it is laid beside the name
+// while it fits there and dropped onto a line of its own when it stops
+// fitting; the state and the buttons keep the first line either way. Whether it
+// fits is a question about the drawn page, so it is asked of it: the heading is
+// laid out unwrapped first, and stacked only where that spills.
+function fit() {
+  for (const summary of document.querySelectorAll('.capture > summary')) {
+    const what = summary.querySelector('.what')
+    summary.classList.remove('stack')
+    if (what.scrollWidth > what.clientWidth + 1) summary.classList.add('stack')
+  }
 }
 
 // what the capture was asked for, in the form it was asked in
@@ -295,7 +469,7 @@ async function act(path, method) {
 
 $('start').addEventListener('submit', async e => {
   e.preventDefault()
-  const picked = [...S.picked]
+  const picked = S.picked.size ? [...S.picked] : matched()
   const spaces = new Set(picked.map(key => key.split('/')[0]))
   const chosen = current()
 
@@ -319,7 +493,7 @@ $('start').addEventListener('submit', async e => {
     name: $('capname').value.trim(),
     namespaceSelector,
     podNames: picked.map(key => key.split('/')[1]),
-    podSelector: S.selector,
+    podSelector: selector(),
     filter: $('filter').value.trim(),
     interface: $('iface').value.trim() || 'any',
     duration: $('duration').value.trim() || '5m',
@@ -357,21 +531,27 @@ $('webshark').addEventListener('change', e => {
 })
 
 let typing
-$('selector').addEventListener('input', e => {
-  S.selector = e.target.value.trim()
-  clearTimeout(typing)
-  typing = setTimeout(tick, 300)
+$('search').addEventListener('input', e => {
+  S.query = e.target.value.trim()
+  $('mode').hidden = !isSelector(S.query)
+  paintPods()                     // the search is matched here, so it is instant
+  if (selector() !== listed) {    // a selector is the API server's to apply
+    clearTimeout(typing)
+    typing = setTimeout(tick, 300)
+  }
 })
 
 $('all').addEventListener('change', e => {
-  for (const pod of S.pods) {
+  for (const { pod } of S.shown) {
     if (pod.phase !== 'Running') continue
-    const key = pod.namespace + '/' + pod.name
-    e.target.checked ? S.picked.add(key) : S.picked.delete(key)
+    e.target.checked ? S.picked.add(podKey(pod)) : S.picked.delete(podKey(pod))
   }
   paintPods()
   $('all').checked = e.target.checked
 })
+
+// the headings are measured, so a narrower window has to measure them again
+addEventListener('resize', fit)
 
 $('close').addEventListener('click', unview)
 addEventListener('keydown', e => {

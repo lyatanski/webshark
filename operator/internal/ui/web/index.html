@@ -26,18 +26,23 @@
 
 <main>
 
-<!-- what to capture from: a namespace, an optional label selector, and the pods
-     that leaves. Ticking pods puts their names in the capture; ticking none and
-     leaving a selector set captures whatever matches, now and later. -->
+<!-- what to capture from: a namespace, a search or a label selector, and the
+     pods that leaves. Ticking pods puts their names in the capture; ticking
+     none captures what the search left, or - for a selector - whatever matches
+     it, now and later. -->
 <section id=pods>
   <div class=bar>
     <select id=namespace></select>
-    <input id=selector placeholder="label selector, e.g. app=pcscf" spellcheck=false autocomplete=off>
+    <input id=search placeholder="search pods by name or label" spellcheck=false autocomplete=off
+      title="The letters in order, gaps allowed: &quot;pcs0&quot; finds sip-pcscf-0 and &quot;core&quot; finds it by tier=core. Several words all have to match, each in the name or in a label.
+Typing what only a label selector has - = ! &lt; &gt; ( in notin - is one instead: the API server matches it exactly, and an unticked Capture follows it as pods come and go.">
+    <span id=mode class=badge hidden
+      title="a label selector, matched by the API server - and what an unticked Capture follows">selector</span>
     <span id=podcount class=quiet></span>
   </div>
   <table>
     <thead><tr>
-      <th class=tick><input type=checkbox id=all title="Select all"></th>
+      <th class=tick><input type=checkbox id=all title="Select every pod in view"></th>
       <th>pod</th><th>status</th><th class=node>node</th><th>capture</th>
     </tr></thead>
     <tbody id=podlist></tbody>

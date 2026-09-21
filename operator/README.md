@@ -179,11 +179,24 @@ the captures upload to.
 
 ## The page
 
-The operator serves one, on `:8080`: pick a namespace, tick pods or type a label
-selector, give it a filter and press Capture. It creates PacketCapture objects
-and reads their status back, so a capture started there is the same object
-`kubectl apply` would have made, and the capture files link straight into
-webshark.
+The operator serves one, on `:8080`: pick a namespace, find the pods, tick them,
+give it a filter and press Capture. It creates PacketCapture objects and reads
+their status back, so a capture started there is the same object `kubectl apply`
+would have made, and the capture files link straight into webshark.
+
+The box above the list searches names and labels, with the letters in order and
+gaps allowed: `pcs0` finds `sip-pcscf-0`, and `core` finds it by `tier=core`.
+Several words all have to match, each of them in the name or in a label, and
+what matched is marked - along with the label, when the label is what matched.
+Nothing is asked of the API server for it, since the list is already in the
+page, so it narrows as it is typed. Running pods are listed first: a stopped one
+can still be what was being looked for, but it cannot be captured.
+
+Typing what only a label selector has - `=` `!` `<` `>` `(`, or `in`/`notin` -
+means one instead, and the chip beside the box says so. That is not only for
+exactness: a selector is the one thing an unticked **Capture** can be left to
+follow as pods come and go. A search cannot be, so it captures the pods it
+matched, by name - and ticked pods win over either.
 
 A capture shows in the **capture** column against the pod it is capturing, even
 though it is not in it, and **pause** really does stop it - resuming starts a new

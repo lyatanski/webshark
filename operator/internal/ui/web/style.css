@@ -77,7 +77,8 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: v
 /* -------------------------------------------------------------------- pods */
 
 .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap }
-.bar #selector { flex: 1; min-width: 180px; font-family: var(--mono) }
+.bar #search { flex: 1; min-width: 180px; font-family: var(--mono) }
+#mode { color: var(--sel); border-color: currentColor; cursor: help }
 
 table { width: 100%; border-collapse: collapse; table-layout: auto }
 th {
@@ -88,6 +89,9 @@ td { padding: 3px 6px; border-bottom: 1px solid color-mix(in srgb, var(--line) 5
 tr:hover td { background: color-mix(in srgb, var(--sel) 6%, transparent) }
 td.tick, th.tick { width: 24px }
 td.pod { font-family: var(--mono) }
+/* what the search matched, and the label it matched when it was not the name */
+td.pod mark { background: color-mix(in srgb, var(--sel) 28%, transparent); color: inherit; border-radius: 2px }
+td.pod .via { margin-left: 6px; color: var(--dim); font-size: 11px }
 td.node, td.file { color: var(--dim) }
 tbody tr.off { opacity: .55 }
 
@@ -114,18 +118,49 @@ tbody tr.off { opacity: .55 }
 /* ---------------------------------------------------------------- captures */
 
 .capture { border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; background: var(--pane) }
+
+/* The heading is three columns: the name, what was asked for, and the state
+   with the buttons hard right. Only the middle one gives, and when what it
+   holds no longer fits (app.js, fit()) it moves to a row of its own under the
+   name - so the state and the buttons never leave the first line. */
 .capture > summary {
-  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  grid-template-areas: "head what acts";
+  align-items: center; gap: 2px 10px;
   padding: 6px 10px; cursor: pointer; list-style: none;
 }
+.capture > summary.stack { grid-template-areas: "head . acts" "what what what" }
 .capture > summary::-webkit-details-marker { display: none }
-.capture > summary::before { content: "\25B8"; color: var(--dim) }
-.capture[open] > summary::before { content: "\25BE" }
+.capture .head { grid-area: head; display: flex; align-items: center; gap: 8px }
+.capture .head::before { content: "\25B8"; color: var(--dim) }
+.capture[open] .head::before { content: "\25BE" }
 .capture .name { font-weight: 600 }
-.capture .what { color: var(--dim); font-family: var(--mono); font-size: 12px }
+.capture .acts { grid-area: acts; display: flex; align-items: center; gap: 8px }
+.capture .what {
+  grid-area: what;
+  color: var(--dim); font-family: var(--mono); font-size: 12px;
+  white-space: nowrap; overflow: hidden;
+}
+/* on its own row it may wrap, and it starts under the name rather than under
+   the fold arrow */
+.capture > summary.stack .what {
+  white-space: normal; overflow-wrap: anywhere; padding-left: 1.4em;
+}
 .capture .body { padding: 0 10px 8px }
-.capture table { margin-top: 4px }
-.capture .msg { color: var(--err); font-size: 12px; font-family: var(--mono) }
+
+/* the same four columns in every card, at the same widths, so they line up
+   down the page however long one card's names happen to be */
+.capture table { margin-top: 4px; table-layout: fixed }
+.capture .pod { width: 32% }
+.capture .state { width: 7.5em }
+.capture .since { width: 8em }
+.capture td.pod, .capture td.file { overflow-wrap: anywhere }
+.capture td.since { color: var(--dim) }
+.capture td.msg { color: var(--err); font-size: 12px; font-family: var(--mono) }
+/* a capture pod's last words, under the row they belong to */
+.capture tr.why td { padding: 0 6px 4px; overflow-wrap: anywhere }
+.capture tr:has(+ tr.why) td { border-bottom: 0 }
 
 /* ------------------------------------------------------------------ viewer */
 

@@ -192,7 +192,7 @@ button {
   margin-top: 2px; padding: 2px 12px 8px; min-width: 260px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 3px;
   box-shadow: 0 4px 12px rgb(0 0 0 / .2);
-  visibility: hidden; opacity: 0; transform: translateX(10px);
+  visibility: hidden; opacity: 0; transform: translateX(6px);
   transition: opacity .15s, transform .15s, visibility .15s;
 }
 #settings.on { visibility: visible; opacity: 1; transform: none; }
